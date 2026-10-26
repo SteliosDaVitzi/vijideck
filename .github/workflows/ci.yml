@@ -1,0 +1,85 @@
+name: Rust desktop
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15-intel, macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev dpkg-dev desktop-file-utils
+      - name: Install Windows packaging tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.4.3 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: cargo fmt --check
+      - run: cargo fmt --manifest-path xtask/Cargo.toml --check
+      - run: cargo clippy --manifest-path xtask/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: Build native packages
+        run: cargo xtask package
+      - name: Verify Windows install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+          $installDir = Join-Path $env:RUNNER_TEMP 'vijideck-install-check'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList @('/CURRENTUSER', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$installDir`"") -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          if (!(Test-Path -LiteralPath (Join-Path $installDir 'vijideck.exe'))) { throw 'Installed executable missing' }
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          if (!(Test-Path -LiteralPath $uninstaller)) { throw 'Uninstaller missing' }
+          $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Uninstaller failed: $($process.ExitCode)" }
+      - name: Verify Debian install and uninstall
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./dist/*/*.deb
+          test -x /usr/bin/vijideck
+          desktop-file-validate /usr/share/applications/vijideck.desktop
+          sudo apt-get remove -y vijideck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vijideck-${{ matrix.os }}
+          path: dist/
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: vijideck-*
+          merge-multiple: true
+      - name: Publish release packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find artifacts -type f -name SHA256SUMS.txt -exec cat {} + > SHA256SUMS.txt
+          mapfile -d '' packages < <(find artifacts -type f ! -name SHA256SUMS.txt -print0)
+          gh release create "$RELEASE_TAG" "${packages[@]}" SHA256SUMS.txt --verify-tag --generate-notes --draft

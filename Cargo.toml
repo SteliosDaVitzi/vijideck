@@ -1,0 +1,26 @@
+[package]
+name = "vijideck"
+version = "0.1.0"
+edition = "2024"
+description = "VijiDeck desktop utilities for system overview, port management, and disk cleanup"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui_extras = "0.33.3"
+netstat2 = "0.11.2"
+sysinfo = "0.37.2"
+chrono = "0.4"
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Performance", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry"] }
+
+[features]
+ui-preview = []
+
+[profile.release]
+lto = "thin"
+strip = true
+
