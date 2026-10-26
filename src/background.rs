@@ -55,6 +55,12 @@ impl Background {
                     "../Glossy Donut Chart in Blue Tray.png"
                 ))?
                 .to_rgba8();
+                let image = image::imageops::resize(
+                    &image,
+                    32,
+                    32,
+                    image::imageops::FilterType::Lanczos3,
+                );
                 let (width, height) = image.dimensions();
                 Ok(TrayIconBuilder::new()
                     .with_tooltip("VijiDeck — system monitor")

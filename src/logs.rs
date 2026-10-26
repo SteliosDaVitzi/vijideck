@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::{
     io::Read,
     process::{Command, Stdio},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -58,8 +59,19 @@ pub struct Entry {
     pub level: String,
     pub source: String,
     pub message: String,
-    pub details: String,
+    raw: String,
     pub search: String,
+    details: OnceLock<String>,
+}
+impl Entry {
+    pub fn details(&self) -> &str {
+        self.details.get_or_init(|| {
+            serde_json::from_str::<Value>(&self.raw)
+                .ok()
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+                .unwrap_or_else(|| self.raw.clone())
+        })
+    }
 }
 pub struct Snapshot {
     pub entries: Vec<Entry>,
@@ -134,15 +146,18 @@ fn entry(v: Value, os: &str) -> Option<Entry> {
             )
         }
     };
-    let details = serde_json::to_string_pretty(&v).unwrap_or_default();
-    let search = format!("{time} {level} {source} {message} {details}").to_lowercase();
+    // Keep one compact event copy for search and defer the larger pretty-printed
+    // representation until the user opens or copies this event.
+    let raw = serde_json::to_string(&v).unwrap_or_default();
+    let search = format!("{time} {level} {source} {message} {raw}").to_lowercase();
     Some(Entry {
         time,
         level,
         source,
         message,
-        details,
+        raw,
         search,
+        details: OnceLock::new(),
     })
 }
 

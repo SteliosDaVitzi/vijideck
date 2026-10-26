@@ -18,6 +18,12 @@ fn main() -> eframe::Result {
     let icon = image::load_from_memory(include_bytes!("../Glossy Donut Chart in Blue Tray.png"))
         .expect("embedded application icon is a valid PNG")
         .to_rgba8();
+    let icon = image::imageops::resize(
+        &icon,
+        64,
+        64,
+        image::imageops::FilterType::Lanczos3,
+    );
     let (width, height) = icon.dimensions();
     eframe::run_native(
         "VijiDeck",

@@ -536,7 +536,7 @@ impl Logs {
                         });
                     });
                     if ui.button("Copy event").clicked() {
-                        ctx.copy_text(e.details.clone());
+                        ctx.copy_text(e.details().to_owned());
                     }
                     egui::ScrollArea::vertical()
                         .id_salt("system_log_details")
@@ -547,7 +547,7 @@ impl Logs {
                             field(ui, "Message", &e.message);
                             ui.collapsing("Raw event", |ui| {
                                 ui.add(
-                                    egui::Label::new(RichText::new(&e.details).monospace())
+                                    egui::Label::new(RichText::new(e.details()).monospace())
                                         .wrap()
                                         .selectable(true),
                                 );

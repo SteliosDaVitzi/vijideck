@@ -100,8 +100,24 @@ fn sockets() -> (Vec<Port>, Vec<String>) {
 }
 
 pub fn scan(system: &mut System) -> Snapshot {
+    let (ports, warnings) = sockets();
+
+    // Keep only sysinfo's lightweight process inventory for the whole system.
+    // Detailed command lines, paths, users, and counters are needed only for
+    // processes currently attached to a socket.
     system.refresh_processes_specifics(
         ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    let pids: Vec<_> = ports
+        .iter()
+        .filter_map(|port| port.key.pid.map(Pid::from_u32))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
         true,
         ProcessRefreshKind::nothing()
             .with_cpu()
@@ -113,7 +129,6 @@ pub fn scan(system: &mut System) -> Snapshot {
             .with_user(UpdateKind::OnlyIfNotSet),
     );
     let users = Users::new_with_refreshed_list();
-    let (ports, warnings) = sockets();
     let mut processes = HashMap::new();
     for pid in ports.iter().filter_map(|p| p.key.pid) {
         if processes.contains_key(&pid) {

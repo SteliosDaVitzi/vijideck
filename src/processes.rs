@@ -2,6 +2,7 @@ use crate::ui::*;
 use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
@@ -65,10 +66,12 @@ impl Processes {
         let (events, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut icons = std::collections::HashMap::new();
+            let mut icon_order = VecDeque::new();
             let mut system = System::new();
             while let Ok(command) = commands.recv() {
                 let event = match command {
                     Command::Scan => {
+                        let mut icons_loaded = 0;
                         system.refresh_processes_specifics(
                             ProcessesToUpdate::All,
                             true,
@@ -83,18 +86,28 @@ impl Processes {
                                 .iter()
                                 .map(|(pid, p)| Process {
                                     icon: p.exe().and_then(|path| {
-                                        icons
-                                            .entry(path.to_owned())
-                                            .or_insert_with(|| {
-                                                executable_icon(path).map(|image| {
-                                                    ctx.load_texture(
-                                                        path.to_string_lossy(),
-                                                        image,
-                                                        egui::TextureOptions::LINEAR,
-                                                    )
-                                                })
-                                            })
-                                            .clone()
+                                        let path = path.to_owned();
+                                        if !icons.contains_key(&path) {
+                                            if icons_loaded >= 128 {
+                                                return None;
+                                            }
+                                            let icon = executable_icon(&path).map(|image| {
+                                                ctx.load_texture(
+                                                    path.to_string_lossy(),
+                                                    image,
+                                                    egui::TextureOptions::LINEAR,
+                                                )
+                                            });
+                                            icons.insert(path.clone(), icon);
+                                            icon_order.push_back(path.clone());
+                                            icons_loaded += 1;
+                                            if icon_order.len() > 128 {
+                                                if let Some(expired) = icon_order.pop_front() {
+                                                    icons.remove(&expired);
+                                                }
+                                            }
+                                        }
+                                        icons.get(&path).cloned().flatten()
                                     }),
                                     pid: pid.as_u32(),
                                     parent: p.parent().map(|parent| parent.as_u32()),
