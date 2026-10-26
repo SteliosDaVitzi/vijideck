@@ -824,20 +824,31 @@ impl VijiDeck {
                         });
                     });
                     row.col(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            // TCP/UDP badges have a compact, fixed-width label. Keep the
-                            // frame at its natural height and center it in this cell.
-                            ui.add_space(((ui.available_width() - 36.0) * 0.5).max(0.0));
-                            badge(
-                                ui,
-                                port.key.protocol,
-                                if port.key.protocol == "TCP" {
-                                    CYAN
-                                } else {
-                                    AMBER
-                                },
-                            );
-                        });
+                        let color = if port.key.protocol == "TCP" {
+                            CYAN
+                        } else {
+                            AMBER
+                        };
+                        let text = ui.painter().layout_no_wrap(
+                            port.key.protocol.to_owned(),
+                            egui::FontId::monospace(10.0),
+                            color,
+                        );
+                        // Size the pill from its text, independently of the table's
+                        // full-height cell layout, then center it in both directions.
+                        let rect = egui::Rect::from_center_size(
+                            ui.max_rect().center(),
+                            text.size() + egui::vec2(12.0, 6.0),
+                        );
+                        ui.painter().rect(
+                            rect,
+                            3,
+                            color.gamma_multiply(0.08),
+                            Stroke::new(1.0, color.gamma_multiply(0.25)),
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter()
+                            .galley(rect.center() - text.size() * 0.5, text, color);
                     });
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {

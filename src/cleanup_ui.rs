@@ -551,55 +551,59 @@ impl Cleanup {
             );
         });
         ui.horizontal(|ui| {
-            let reserve = 125.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2((ui.available_width() - reserve).max(80.0), 18.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    if self.busy && !self.deleting {
-                        let path = display(&self.progress.path);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(if path.is_empty() {
-                                    "Preparing scan…"
-                                } else {
-                                    &path
-                                })
-                                .size(11.0)
-                                .color(MUTED),
-                            )
-                            .truncate(),
-                        )
-                        .on_hover_text(path);
-                    } else {
-                        ui.label(
-                            RichText::new(format!(
-                                "{} folders checked  /  {} files measured",
-                                number(self.progress.directories),
-                                number(self.progress.files)
-                            ))
-                            .size(11.0)
-                            .color(MUTED),
-                        );
-                    }
-                },
-            );
             let issues = self.scan.as_ref().map_or(0, |s| s.warnings.len()) + self.failures.len();
             let details_label = if issues > 0 {
                 format!("Scan details  ·  {issues}")
             } else {
                 "Scan details".into()
             };
-            if ui
-                .add(
-                    egui::Button::new(RichText::new(details_label).size(11.0).color(CYAN))
-                        .min_size(egui::vec2(100.0, 24.0)),
-                )
-                .on_hover_text("View skipped paths and scan warnings")
-                .clicked()
-            {
-                self.details_open = true;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(details_label).size(11.0).color(CYAN))
+                            .min_size(egui::vec2(100.0, 24.0)),
+                    )
+                    .on_hover_text("View skipped paths and scan warnings")
+                    .clicked()
+                {
+                    self.details_open = true;
+                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        if self.busy && !self.deleting {
+                            let path = display(&self.progress.path);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(if path.is_empty() {
+                                        "Preparing scan…"
+                                    } else {
+                                        &path
+                                    })
+                                    .size(11.0)
+                                    .color(MUTED),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(path);
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!(
+                                        "{} folders checked  /  {} files measured",
+                                        number(self.progress.directories),
+                                        number(self.progress.files)
+                                    ))
+                                    .size(11.0)
+                                    .color(MUTED),
+                                )
+                                .truncate(),
+                            );
+                        }
+                    },
+                );
+            });
         });
         ui.add_space(6.0);
         rule(ui);

@@ -92,7 +92,9 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
         .corner_radius(3)
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).monospace().size(10.0).color(color));
+            ui.add(
+                egui::Label::new(RichText::new(text).monospace().size(10.0).color(color)).extend(),
+            );
         });
 }
 
