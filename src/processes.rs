@@ -236,7 +236,7 @@ impl Processes {
                         memory,
                     });
                     if self.expanded.contains(&group_pid) {
-                        section_rows[section].extend(instances.iter().map(|p| ProcessRow::Process(*p)));
+                        section_rows[section].extend(instances.iter().map(|p| ProcessRow::Process(p)));
                     }
                 } else {
                     section_rows[section].push(ProcessRow::Process(instances[0]));
@@ -273,7 +273,7 @@ impl Processes {
                                 let c = r.center();
                                 let points = if expanded { vec![c + egui::vec2(-3.5, -2.0), c + egui::vec2(3.5, -2.0), c + egui::vec2(0.0, 2.5)] } else { vec![c + egui::vec2(-2.0, -3.5), c + egui::vec2(-2.0, 3.5), c + egui::vec2(2.5, 0.0)] };
                                 ui.painter().add(egui::Shape::convex_polygon(points, if response.hovered() { CYAN } else { MUTED }, egui::Stroke::NONE));
-                                if response.clicked() { if !self.expanded.remove(pid) { self.expanded.insert(*pid); } }
+                                if response.clicked() && !self.expanded.remove(pid) { self.expanded.insert(*pid); }
                                 if let Some(icon) = icon { ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(20.0, 20.0))); }
                                 else { let (r, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover()); ui.painter().circle_filled(r.center(), 4.0, MUTED); }
                                 ui.label(RichText::new(format!("{name} ({count})")).strong());

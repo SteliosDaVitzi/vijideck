@@ -85,19 +85,19 @@ impl Logs {
     pub fn configure_startup(&mut self, request: crate::logs_access::Request) {
         self.source = request.source;
         self.minutes = request.minutes;
-        if let Some((start, end)) = request.range {
-            if let (Ok(start), Ok(end)) = (
+        if let Some((start, end)) = request.range
+            && let (Ok(start), Ok(end)) = (
                 chrono::DateTime::parse_from_rfc3339(&start),
                 chrono::DateTime::parse_from_rfc3339(&end),
-            ) {
-                let start = start.with_timezone(&Local);
-                let end = end.with_timezone(&Local);
-                self.start_date = start.date_naive();
-                self.start_hour = start.hour();
-                self.end_date = end.date_naive();
-                self.end_hour = end.hour();
-                self.custom_range = true;
-            }
+            )
+        {
+            let start = start.with_timezone(&Local);
+            let end = end.with_timezone(&Local);
+            self.start_date = start.date_naive();
+            self.start_hour = start.hour();
+            self.end_date = end.date_naive();
+            self.end_hour = end.hour();
+            self.custom_range = true;
         }
         #[cfg(windows)]
         {

@@ -195,6 +195,129 @@ impl Overview {
         }
     }
 
+    pub fn widget(&self, ctx: &egui::Context, can_hide: bool) -> Option<crate::background::Action> {
+        use crate::background::Action;
+        let mut action = None;
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(11, 18, 24, 225))
+                    .stroke(Stroke::new(1.0, LINE))
+                    .corner_radius(16)
+                    .inner_margin(egui::Margin::same(10)),
+            )
+            .show(ctx, |ui| {
+                let drag_area = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("widget_drag_area"),
+                    egui::Sense::click_and_drag(),
+                );
+                if drag_area.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("VIJIDECK").size(10.0).strong().color(MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if can_hide && Self::minimize_button(ui).clicked() {
+                            action = Some(Action::Hide);
+                        }
+                    });
+                });
+                ui.add_space(5.0);
+                let values = self
+                    .sample
+                    .as_ref()
+                    .map(|sample| {
+                        [
+                            Some(sample.cpu),
+                            (sample.total_memory > 0)
+                                .then(|| sample.memory as f32 / sample.total_memory as f32 * 100.0),
+                            sample.gpu,
+                        ]
+                    })
+                    .unwrap_or([None; 3]);
+                ui.columns(3, |columns| {
+                    for ((ui, label), value) in
+                        columns.iter_mut().zip(["CPU", "RAM", "GPU"]).zip(values)
+                    {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(label).size(9.0).color(MUTED));
+                            Self::mini_gauge(ui, value);
+                        });
+                    }
+                });
+                ui.label(
+                    RichText::new(if self.sample.is_none() {
+                        "Waiting for telemetry"
+                    } else if self.updated.elapsed() > Duration::from_secs(5) {
+                        "Telemetry delayed"
+                    } else {
+                        "Live · 1s"
+                    })
+                    .size(9.0)
+                    .color(MUTED),
+                );
+            });
+        action
+    }
+
+    fn mini_gauge(ui: &mut egui::Ui, value: Option<f32>) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(62.0, 62.0), egui::Sense::hover());
+        let center = rect.center();
+        let radius = 24.0;
+        ui.painter()
+            .circle_stroke(center, radius, Stroke::new(4.0, LINE));
+        if let Some(value) = value {
+            let value = value.clamp(0.0, 100.0);
+            let points: Vec<_> = (0..=48)
+                .map(|i| {
+                    center
+                        + egui::Vec2::angled(
+                            -std::f32::consts::FRAC_PI_2
+                                + i as f32 / 48.0 * std::f32::consts::TAU * value / 100.0,
+                        ) * radius
+                })
+                .collect();
+            ui.painter()
+                .add(egui::Shape::line(points, Stroke::new(4.0, CYAN)));
+        }
+        ui.painter().text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            value.map_or_else(|| "—".into(), |v| format!("{v:.0}%")),
+            egui::FontId::proportional(14.0),
+            TEXT,
+        );
+    }
+
+    fn minimize_button(ui: &mut egui::Ui) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 24.0), egui::Sense::click());
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect(
+            rect,
+            7,
+            visuals.bg_fill,
+            Stroke::new(
+                1.0,
+                if response.hovered() {
+                    CYAN.gamma_multiply(0.65)
+                } else {
+                    LINE
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        let center = rect.center();
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-4.0, 2.0),
+                center + egui::vec2(4.0, 2.0),
+            ],
+            Stroke::new(1.6, if response.hovered() { CYAN } else { TEXT }),
+        );
+        response.on_hover_text("Minimize to tray")
+    }
+
     #[cfg(feature = "ui-preview")]
     pub fn preview_ready(&self) -> bool {
         self.sample.is_some() && self.hardware.is_some() && self.history.len() >= 2

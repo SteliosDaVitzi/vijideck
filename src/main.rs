@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod background;
 mod cleanup;
 mod cleanup_ui;
 mod gpu;
@@ -22,6 +23,7 @@ fn main() -> eframe::Result {
         "VijiDeck",
         eframe::NativeOptions {
             viewport: eframe::egui::ViewportBuilder::default()
+                .with_transparent(true)
                 .with_icon(std::sync::Arc::new(eframe::egui::IconData {
                     rgba: icon.into_raw(),
                     width,

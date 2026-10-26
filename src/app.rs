@@ -19,6 +19,7 @@ enum Event {
 }
 
 pub struct VijiDeck {
+    background: crate::background::Background,
     active_tool: usize,
     logs_only: bool,
     processes: crate::processes::Processes,
@@ -73,6 +74,7 @@ impl VijiDeck {
             .expect("start port worker");
         tx.send(Command::Scan).ok();
         let mut app = Self {
+            background: crate::background::Background::new(cc),
             active_tool: 2,
             logs_only: false,
             processes: crate::processes::Processes::new(cc.egui_ctx.clone()),
@@ -101,6 +103,11 @@ impl VijiDeck {
             preview_requested: false,
         };
         app.configure_preview();
+        #[cfg(feature = "ui-preview")]
+        if std::env::var("VIJIDECK_PREVIEW_VIEW").as_deref() == Ok("widget") {
+            app.background
+                .apply(crate::background::Action::Widget, &cc.egui_ctx);
+        }
         if let Some(request) = crate::logs_access::startup_request() {
             app.active_tool = 3;
             app.logs_only = true;
@@ -113,7 +120,7 @@ impl VijiDeck {
         #[cfg(feature = "ui-preview")]
         if std::env::var_os("VIJIDECK_SCREENSHOT_TO").is_some() {
             match std::env::var("VIJIDECK_PREVIEW_VIEW").as_deref() {
-                Ok("overview" | "overview-hardware") => self.active_tool = 2,
+                Ok("overview" | "overview-hardware" | "widget") => self.active_tool = 2,
                 Ok("processes") => self.active_tool = 4,
                 Ok("logs") => self.active_tool = 3,
                 Ok("logs-list") => {
@@ -146,7 +153,7 @@ impl VijiDeck {
             }
             if !matches!(
                 std::env::var("VIJIDECK_PREVIEW_VIEW").as_deref(),
-                Ok("overview" | "overview-hardware")
+                Ok("overview" | "overview-hardware" | "widget")
             ) && self.active_tool == 2
             {
                 self.active_tool = 0;
@@ -190,7 +197,8 @@ impl VijiDeck {
                     image::ColorType::Rgba8,
                 )
                 .expect("save UI preview");
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.background.quitting = true;
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
             }
         }
     }
@@ -225,6 +233,21 @@ impl VijiDeck {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(22.0);
+                        if ui.small_button("Quit").clicked() {
+                            self.background.apply(crate::background::Action::Quit, ctx);
+                        }
+                        if ui
+                            .small_button("Widget")
+                            .on_hover_text("Keep monitoring in a floating widget")
+                            .clicked()
+                        {
+                            self.background
+                                .apply(crate::background::Action::Widget, ctx);
+                        }
+                        if let Some(error) = &self.background.error {
+                            ui.label(RichText::new("Tray unavailable").color(AMBER))
+                                .on_hover_text(error);
+                        }
                         ui.label(
                             RichText::new("LOCAL SYSTEM")
                                 .monospace()
@@ -994,7 +1017,18 @@ impl VijiDeck {
 }
 
 impl eframe::App for VijiDeck {
+    fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
+        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        // Screenshot previews must be allowed to exit without becoming a widget.
+        #[cfg(feature = "ui-preview")]
+        if self.preview_requested && ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        self.background.poll(ctx);
+        self.background.sync_window_shape();
         self.cleanup.poll();
         self.overview.poll();
         while let Ok(event) = self.rx.try_recv() {
@@ -1022,6 +1056,18 @@ impl eframe::App for VijiDeck {
             self.refresh();
         }
         ctx.request_repaint_after(Duration::from_millis(250));
+        if self.background.widget_visible {
+            let can_hide = self.background.can_hide();
+            let action = self.overview.widget(ctx, can_hide);
+            #[cfg(feature = "ui-preview")]
+            self.capture_preview(ctx);
+            if let Some(action) = action {
+                self.background.apply(action, ctx);
+            }
+        }
+        if self.background.compact {
+            return;
+        }
         if self.active_tool == 0
             && self.confirmation.is_none()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R))

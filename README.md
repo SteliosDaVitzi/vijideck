@@ -42,6 +42,16 @@ Packages currently have no trusted distribution signature. macOS bundles use an 
 
 ## System overview
 
+### Background monitor and tray
+
+Closing the main window keeps VijiDeck running and switches it to a small, semi-transparent, always-on-top CPU/RAM/GPU widget with rounded corners. Three circular gauges show current usage. Drag anywhere on the widget to move it; its single minimize button hides it to the tray. The tray icon opens the full app again. The **Widget** button in the main window does the same thing as closing it. Window size and widget position are remembered while the app is running. Missing GPU readings show a dash, and delayed telemetry is labeled.
+
+On Windows, VijiDeck also appears in the notification area (including its overflow menu). Click the tray icon to open the app, or right-click for **Open VijiDeck**, **Show widget**, **Hide widget**, and **Quit VijiDeck**. Closing the widget hides it to the tray. Use **Quit** in the main window or tray menu to stop the app completely. If tray initialization fails, the minimize button is hidden so the app remains accessible.
+
+Monitoring runs in the signed-in desktop session. It continues while the main interface is closed or hidden, and ends at logout or when you quit. It does not install an operating-system service or start automatically at login. macOS/Linux support the floating widget but currently have no tray integration; closing the widget restores the main window. Desktop transparency and always-on-top behavior depend on the window manager/compositor.
+
+For a widget screenshot, use the existing preview feature with `VIJIDECK_PREVIEW_VIEW=widget` and `VIJIDECK_SCREENSHOT_TO=<output.png>` when running `cargo run --features ui-preview`.
+
 The app opens on **System overview**. The first icon in the tool rail returns to it.
 
 - Large circular indicators show total CPU utilization, usable memory in use, and live GPU utilization, with only the GPU model and memory capacity beneath the GPU gauge (the active adapter with the most dedicated memory). If neither GPU details nor utilization readings are available after inventory completes, the third indicator falls back to mounted storage capacity. A known GPU with unavailable utilization keeps its details and an unavailable reading. CPU is normalized to 0–100% for the entire machine. Mounted storage capacity also remains in the storage section below.
