@@ -583,7 +583,7 @@ impl VijiDeck {
                         can_stop,
                         egui::Button::new(RichText::new("Force kill").color(RED))
                             .fill(RED.gamma_multiply(0.07))
-                            .stroke(Stroke::new(1.0, RED.gamma_multiply(0.4)))
+                            .stroke(Stroke::new(1.0_f32, RED.gamma_multiply(0.4)))
                             .min_size(egui::vec2(100.0, 32.0)),
                     )
                     .on_disabled_hover_text(
@@ -659,7 +659,7 @@ impl VijiDeck {
             .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
         egui::Frame::new()
             .fill(PANEL)
-            .stroke(Stroke::new(1.0, LINE))
+            .stroke(Stroke::new(1.0_f32, LINE))
             .corner_radius(5)
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
@@ -834,7 +834,7 @@ impl VijiDeck {
                                 ui.painter().vline(
                                     rect.left(),
                                     rect.y_range(),
-                                    Stroke::new(2.0, CYAN),
+                                    Stroke::new(2.0_f32, CYAN),
                                 );
                             }
                             ui.add_space(2.0);
@@ -867,7 +867,7 @@ impl VijiDeck {
                             rect,
                             3,
                             color.gamma_multiply(0.08),
-                            Stroke::new(1.0, color.gamma_multiply(0.25)),
+                            Stroke::new(1.0_f32, color.gamma_multiply(0.25)),
                             egui::StrokeKind::Inside,
                         );
                         ui.painter()
@@ -985,7 +985,7 @@ impl VijiDeck {
             let modal_id = egui::Id::new("confirm_stop");
             let modal = egui::Modal::new(modal_id)
                 .area(egui::Modal::default_area(modal_id).fade_in(!cfg!(feature = "ui-preview")))
-                .frame(panel(PANEL, 24).stroke(Stroke::new(1.0, LINE)).corner_radius(6))
+                .frame(panel(PANEL, 24).stroke(Stroke::new(1.0_f32, LINE)).corner_radius(6))
                 .show(ctx, |ui| {
                 ui.set_width(420.0);
                 ui.add_space(8.0);
@@ -1128,14 +1128,14 @@ fn search_icon(ui: &mut egui::Ui) {
     ui.painter().circle_stroke(
         rect.center() - egui::vec2(2.0, 2.0),
         4.5,
-        Stroke::new(1.2, MUTED),
+        Stroke::new(1.2_f32, MUTED),
     );
     ui.painter().line_segment(
         [
             rect.center() + egui::vec2(1.5, 1.5),
             rect.right_bottom() - egui::vec2(2.0, 2.0),
         ],
-        Stroke::new(1.2, MUTED),
+        Stroke::new(1.2_f32, MUTED),
     );
 }
 

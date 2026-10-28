@@ -76,7 +76,7 @@ impl LogList {
                         rect,
                         4.0,
                         if is_selected { SELECTED } else { SURFACE },
-                        Stroke::new(1.0, if is_selected { CYAN } else { LINE }),
+                        Stroke::new(1.0_f32, if is_selected { CYAN } else { LINE }),
                         egui::StrokeKind::Inside,
                     );
                     let level_color = match entry.level.as_str() {

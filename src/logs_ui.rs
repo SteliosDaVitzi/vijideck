@@ -680,12 +680,12 @@ mod tests {
         app.snapshot = Some(logs::Snapshot {
             note: "Recent events. Search filters loaded events. Visibility depends on OS permissions; private fields may be redacted.".into(),
             access_limited: false,
-            entries: (0..50).map(|i| logs::Entry {
-                time: "2026-10-26T14:00:00+02:00".into(),
-                level: "Info".into(), source: format!("Long service name / {i}"),
-                message: "A long log message that should remain contained when the inspector opens and reduces the width of the list.".into(),
-                details: format!("Event {i}"), search: format!("event {i}"),
-            }).collect(),
+            entries: (0..50).map(|i| logs::Entry::test_entry(
+                "2026-10-26T14:00:00+02:00".into(),
+                "Info".into(), format!("Long service name / {i}"),
+                "A long log message that should remain contained when the inspector opens and reduces the width of the list.".into(),
+                format!("Event {i}"), format!("event {i}"),
+            )).collect(),
         });
         frame(&ctx, &mut app, vec![]);
         frame(&ctx, &mut app, vec![]);

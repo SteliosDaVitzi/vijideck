@@ -362,7 +362,7 @@ impl Cleanup {
                                     .min_size(egui::vec2(size, size))
                                     .fill(if selected { SURFACE } else { PANEL })
                                     .stroke(Stroke::new(
-                                        if selected { 1.5 } else { 1.0 },
+                                        if selected { 1.5 } else { 1.0_f32 },
                                         if selected { CYAN } else { LINE },
                                     )),
                             );
@@ -625,7 +625,7 @@ impl Cleanup {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     panel(PANEL, 6)
-                        .stroke(Stroke::new(1.0, LINE))
+                        .stroke(Stroke::new(1.0_f32, LINE))
                         .corner_radius(4)
                         .show(ui, |ui| {
                             ui.set_width(search_width - 12.0);
@@ -1006,7 +1006,7 @@ impl Cleanup {
                                 PANEL
                             })
                             .stroke(Stroke::new(
-                                1.0,
+                                1.0_f32,
                                 if is_selected {
                                     CYAN.gamma_multiply(0.55)
                                 } else {
@@ -1441,7 +1441,7 @@ fn folder_glyph(ui: &mut egui::Ui, color: egui::Color32) {
         r.min + egui::vec2(2.0, 7.0),
     ];
     ui.painter()
-        .add(egui::Shape::line(points, Stroke::new(1.2, color)));
+        .add(egui::Shape::line(points, Stroke::new(1.2_f32, color)));
 }
 fn sort_label(sort: usize, descending: bool) -> &'static str {
     match (sort, descending) {
@@ -1504,14 +1504,14 @@ fn search_glyph(ui: &mut egui::Ui) {
     ui.painter().circle_stroke(
         r.center() - egui::vec2(2.0, 2.0),
         5.0,
-        Stroke::new(1.4, MUTED),
+        Stroke::new(1.4_f32, MUTED),
     );
     ui.painter().line_segment(
         [
             r.center() + egui::vec2(2.0, 2.0),
             r.right_bottom() - egui::vec2(2.0, 2.0),
         ],
-        Stroke::new(1.4, MUTED),
+        Stroke::new(1.4_f32, MUTED),
     );
 }
 fn date(t: Option<SystemTime>) -> String {

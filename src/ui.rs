@@ -19,23 +19,23 @@ pub fn theme(ctx: &egui::Context) {
     v.window_fill = PANEL;
     v.extreme_bg_color = BG;
     v.faint_bg_color = Color32::from_rgb(12, 20, 27);
-    v.window_stroke = Stroke::new(1.0, LINE);
+    v.window_stroke = Stroke::new(1.0_f32, LINE);
     v.window_corner_radius = 8.into();
     v.selection.bg_fill = Color32::from_rgb(19, 54, 65);
-    v.selection.stroke = Stroke::new(1.0, CYAN);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
+    v.selection.stroke = Stroke::new(1.0_f32, CYAN);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, LINE);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, MUTED);
     v.widgets.inactive.bg_fill = SURFACE;
     v.widgets.inactive.weak_bg_fill = SURFACE;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, LINE);
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
     v.widgets.hovered.bg_fill = Color32::from_rgb(22, 42, 52);
     v.widgets.hovered.weak_bg_fill = Color32::from_rgb(22, 42, 52);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, CYAN.gamma_multiply(0.6));
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0, CYAN);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, CYAN.gamma_multiply(0.6));
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, CYAN);
     v.widgets.active.bg_fill = Color32::from_rgb(22, 57, 68);
     v.widgets.active.weak_bg_fill = v.widgets.active.bg_fill;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, CYAN);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, CYAN);
     for widget in [
         &mut v.widgets.inactive,
         &mut v.widgets.hovered,
@@ -77,7 +77,7 @@ pub fn rule(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter()
-        .hline(rect.x_range(), rect.center().y, Stroke::new(1.0, LINE));
+        .hline(rect.x_range(), rect.center().y, Stroke::new(1.0_f32, LINE));
 }
 
 pub fn dot(ui: &mut egui::Ui, color: Color32) {
@@ -88,7 +88,7 @@ pub fn dot(ui: &mut egui::Ui, color: Color32) {
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.08))
-        .stroke(Stroke::new(1.0, color.gamma_multiply(0.25)))
+        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.25)))
         .corner_radius(3)
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
@@ -127,7 +127,7 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
         ui.painter().hline(
             response.rect.x_range(),
             response.rect.bottom(),
-            Stroke::new(1.5, CYAN),
+            Stroke::new(1.5_f32, CYAN),
         );
     }
     response
@@ -137,13 +137,13 @@ pub fn reactor(ui: &mut egui::Ui, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     let center = rect.center();
     let p = ui.painter();
-    p.circle_stroke(center, size * 0.39, Stroke::new(1.0, LINE));
+    p.circle_stroke(center, size * 0.39, Stroke::new(1.0_f32, LINE));
     for i in 0..3 {
         let start = i as f32 * std::f32::consts::TAU / 3.0 - 1.4;
         let points: Vec<_> = (0..=20)
             .map(|n| center + Vec2::angled(start + n as f32 / 20.0 * 1.55) * size * 0.30)
             .collect();
-        p.add(egui::Shape::line(points, Stroke::new(2.0, CYAN)));
+        p.add(egui::Shape::line(points, Stroke::new(2.0_f32, CYAN)));
     }
     p.circle_filled(center, size * 0.09, CYAN);
 }
@@ -166,14 +166,14 @@ pub fn port_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
                 rect.left_top() + egui::vec2(0.0, 9.0),
                 rect.left_bottom() - egui::vec2(0.0, 9.0),
             ],
-            Stroke::new(2.0, CYAN),
+            Stroke::new(2.0_f32, CYAN),
         );
     }
     let c = rect.center();
     for x in [-8.0, 0.0, 8.0] {
         p.line_segment(
             [c + egui::vec2(x, -7.0), c + egui::vec2(x, 7.0)],
-            Stroke::new(1.0, CYAN),
+            Stroke::new(1.0_f32, CYAN),
         );
         p.circle_filled(
             c + egui::vec2(x, if x == 0.0 { 3.0 } else { -2.0 }),
@@ -183,7 +183,7 @@ pub fn port_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
         p.circle_stroke(
             c + egui::vec2(x, if x == 0.0 { 3.0 } else { -2.0 }),
             2.5,
-            Stroke::new(1.0, CYAN),
+            Stroke::new(1.0_f32, CYAN),
         );
     }
     response.on_hover_text("Port manager")
@@ -191,16 +191,16 @@ pub fn port_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
 
 pub fn disk_glyph(p: &egui::Painter, rect: egui::Rect, color: Color32) {
     let r = rect.shrink(rect.width() * 0.12);
-    p.rect_stroke(r, 3.0, Stroke::new(1.3, color), egui::StrokeKind::Inside);
+    p.rect_stroke(r, 3.0, Stroke::new(1.3_f32, color), egui::StrokeKind::Inside);
     let y = r.bottom() - r.height() * 0.25;
     p.line_segment(
         [egui::pos2(r.left(), y), egui::pos2(r.right(), y)],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
     p.circle_stroke(
         egui::pos2(r.center().x, r.top() + r.height() * 0.35),
         r.width() * 0.17,
-        Stroke::new(1.1, color),
+        Stroke::new(1.1_f32, color),
     );
     p.circle_filled(egui::pos2(r.right() - 4.0, r.bottom() - 3.5), 1.2, color);
 }
@@ -224,7 +224,7 @@ pub fn cleanup_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
                 rect.left_top() + egui::vec2(0.0, 9.0),
                 rect.left_bottom() - egui::vec2(0.0, 9.0),
             ],
-            Stroke::new(2.0, CYAN),
+            Stroke::new(2.0_f32, CYAN),
         );
     }
     disk_glyph(p, rect.shrink(8.0), if active { CYAN } else { MUTED });
@@ -251,18 +251,18 @@ pub fn logs_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
                 rect.left_top() + egui::vec2(0.0, 9.0),
                 rect.left_bottom() - egui::vec2(0.0, 9.0),
             ],
-            Stroke::new(2.0, CYAN),
+            Stroke::new(2.0_f32, CYAN),
         );
     }
     let page = rect.shrink(13.0);
-    painter.rect_stroke(page, 2.0, Stroke::new(1.3, color), egui::StrokeKind::Inside);
+    painter.rect_stroke(page, 2.0, Stroke::new(1.3_f32, color), egui::StrokeKind::Inside);
     for y in [-4.0, 0.0, 4.0] {
         painter.line_segment(
             [
                 egui::pos2(page.left() + 4.0, page.center().y + y),
                 egui::pos2(page.right() - 4.0, page.center().y + y),
             ],
-            Stroke::new(1.2, color),
+            Stroke::new(1.2_f32, color),
         );
     }
     response.on_hover_text("System logs")
@@ -287,7 +287,7 @@ pub fn tasks_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
                 rect.left_top() + egui::vec2(0.0, 9.0),
                 rect.left_bottom() - egui::vec2(0.0, 9.0),
             ],
-            Stroke::new(2.0, CYAN),
+            Stroke::new(2.0_f32, CYAN),
         );
     }
     let c = rect.center();
@@ -295,7 +295,7 @@ pub fn tasks_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     p.rect_stroke(
         rect.shrink(11.0),
         2.0,
-        Stroke::new(1.3, color),
+        Stroke::new(1.3_f32, color),
         egui::StrokeKind::Inside,
     );
     p.add(egui::Shape::line(
@@ -307,7 +307,7 @@ pub fn tasks_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
             c + egui::vec2(5.0, -1.0),
             c + egui::vec2(8.0, -1.0),
         ],
-        Stroke::new(1.3, color),
+        Stroke::new(1.3_f32, color),
     ));
     response.on_hover_text("Process manager")
 }
@@ -326,11 +326,11 @@ pub fn port_heading(ui: &mut egui::Ui, port: u16, protocol: &str, state: &str, c
     ] {
         painter.line_segment(
             [corner + egui::vec2(0.0, dy * 14.0), corner],
-            Stroke::new(1.0, CYAN.gamma_multiply(0.45)),
+            Stroke::new(1.0_f32, CYAN.gamma_multiply(0.45)),
         );
         painter.line_segment(
             [corner, corner + egui::vec2(dx * 14.0, 0.0)],
-            Stroke::new(1.0, CYAN.gamma_multiply(0.45)),
+            Stroke::new(1.0_f32, CYAN.gamma_multiply(0.45)),
         );
     }
     painter.text(

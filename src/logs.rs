@@ -64,6 +64,11 @@ pub struct Entry {
     details: OnceLock<String>,
 }
 impl Entry {
+    #[cfg(test)]
+    pub(crate) fn test_entry(time: String, level: String, source: String, message: String, raw: String, search: String) -> Self {
+        Self { time, level, source, message, raw, search, details: OnceLock::new() }
+    }
+
     pub fn details(&self) -> &str {
         self.details.get_or_init(|| {
             serde_json::from_str::<Value>(&self.raw)
@@ -395,7 +400,7 @@ mod tests {
     fn reads_host_logs() {
         let snapshot = load(default_source(), 1440, None).expect("read host logs");
         assert!(snapshot.entries.len() <= LIMIT);
-        assert!(snapshot.entries.iter().all(|e| !e.details.is_empty()));
+        assert!(snapshot.entries.iter().all(|e| !e.details().is_empty()));
         println!("Read {} system events", snapshot.entries.len());
     }
     #[test]

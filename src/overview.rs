@@ -202,7 +202,7 @@ impl Overview {
             .frame(
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(11, 18, 24, 225))
-                    .stroke(Stroke::new(1.0, LINE))
+                    .stroke(Stroke::new(1.0_f32, LINE))
                     .corner_radius(16)
                     .inner_margin(egui::Margin::same(10)),
             )
@@ -266,7 +266,7 @@ impl Overview {
         let center = rect.center();
         let radius = 24.0;
         ui.painter()
-            .circle_stroke(center, radius, Stroke::new(4.0, LINE));
+            .circle_stroke(center, radius, Stroke::new(4.0_f32, LINE));
         if let Some(value) = value {
             let value = value.clamp(0.0, 100.0);
             let points: Vec<_> = (0..=48)
@@ -279,7 +279,7 @@ impl Overview {
                 })
                 .collect();
             ui.painter()
-                .add(egui::Shape::line(points, Stroke::new(4.0, CYAN)));
+                .add(egui::Shape::line(points, Stroke::new(4.0_f32, CYAN)));
         }
         ui.painter().text(
             center,
@@ -298,7 +298,7 @@ impl Overview {
             7,
             visuals.bg_fill,
             Stroke::new(
-                1.0,
+                1.0_f32,
                 if response.hovered() {
                     CYAN.gamma_multiply(0.65)
                 } else {
@@ -313,7 +313,7 @@ impl Overview {
                 center + egui::vec2(-4.0, 2.0),
                 center + egui::vec2(4.0, 2.0),
             ],
-            Stroke::new(1.6, if response.hovered() { CYAN } else { TEXT }),
+            Stroke::new(1.6_f32, if response.hovered() { CYAN } else { TEXT }),
         );
         response.on_hover_text("Minimize to tray")
     }
@@ -441,7 +441,7 @@ impl Overview {
         let p = ui.painter();
         for fraction in [0.0, 0.5, 1.0] {
             let y = rect.bottom() - rect.height() * fraction;
-            p.hline(rect.x_range(), y, Stroke::new(1.0, LINE));
+            p.hline(rect.x_range(), y, Stroke::new(1.0_f32, LINE));
         }
         let points: Vec<_> = self
             .history
@@ -455,7 +455,7 @@ impl Overview {
             })
             .collect();
         if points.len() > 1 {
-            p.add(egui::Shape::line(points, Stroke::new(1.5, CYAN)));
+            p.add(egui::Shape::line(points, Stroke::new(1.5_f32, CYAN)));
         }
         caption(ui, "CPU history / up to 60 samples / 0–100%");
         ui.add_space(8.0);
@@ -539,7 +539,7 @@ fn gauge(
     subtitle: &str,
 ) {
     panel(PANEL, 16)
-        .stroke(Stroke::new(1.0, LINE))
+        .stroke(Stroke::new(1.0_f32, LINE))
         .corner_radius(5)
         .show(ui, |ui| {
             ui.set_min_width((ui.available_width()).max(0.0));
@@ -551,7 +551,7 @@ fn gauge(
                 let center = rect.center();
                 let radius = size * 0.41;
                 ui.painter()
-                    .circle_stroke(center, radius, Stroke::new(7.0, LINE));
+                    .circle_stroke(center, radius, Stroke::new(7.0_f32, LINE));
                 if let Some(value) = usage {
                     let points: Vec<_> = (0..=100)
                         .map(|i| {
@@ -563,7 +563,7 @@ fn gauge(
                         })
                         .collect();
                     ui.painter()
-                        .add(egui::Shape::line(points, Stroke::new(7.0, color)));
+                        .add(egui::Shape::line(points, Stroke::new(7.0_f32, color)));
                 }
                 ui.painter().text(
                     center,
@@ -589,14 +589,14 @@ pub fn rail_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
                 rect.left_top() + egui::vec2(0.0, 9.0),
                 rect.left_bottom() - egui::vec2(0.0, 9.0),
             ],
-            Stroke::new(2.0, CYAN),
+            Stroke::new(2.0_f32, CYAN),
         );
     }
     for (x, y) in [(-9.0, -9.0), (2.0, -9.0), (-9.0, 2.0), (2.0, 2.0)] {
         p.rect_stroke(
             egui::Rect::from_min_size(rect.center() + egui::vec2(x, y), egui::vec2(7.0, 7.0)),
             1.0,
-            Stroke::new(1.3, if active { CYAN } else { MUTED }),
+            Stroke::new(1.3_f32, if active { CYAN } else { MUTED }),
             egui::StrokeKind::Inside,
         );
     }

@@ -359,7 +359,7 @@ fn folder_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     p.rect_stroke(
         egui::Rect::from_min_max(r.left_top() + egui::vec2(0.0, 3.0), r.right_bottom()),
         1.0,
-        egui::Stroke::new(1.2, color),
+        egui::Stroke::new(1.2_f32, color),
         egui::StrokeKind::Inside,
     );
     response
@@ -375,11 +375,11 @@ fn kill_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     let p = ui.painter();
     p.line_segment(
         [r.left_top(), r.right_bottom()],
-        egui::Stroke::new(1.5, RED),
+        egui::Stroke::new(1.5_f32, RED),
     );
     p.line_segment(
         [r.right_top(), r.left_bottom()],
-        egui::Stroke::new(1.5, RED),
+        egui::Stroke::new(1.5_f32, RED),
     );
     response
 }
