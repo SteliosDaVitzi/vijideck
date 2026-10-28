@@ -249,6 +249,10 @@ impl Background {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(1.0, 1.0)));
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(300.0, 160.0)));
+                // X11 resize requests are asynchronous: disabling resizing here can
+                // pin the window to its old, full-size dimensions. The widget has
+                // no decorations, so leave resizing enabled on Linux.
+                #[cfg(not(target_os = "linux"))]
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
                     egui::WindowLevel::AlwaysOnTop,
