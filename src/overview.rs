@@ -35,6 +35,7 @@ struct Volume {
 struct Hardware {
     sections: Vec<(String, String)>,
     gpu_card: Option<(String, String)>,
+    memory_summary: Option<String>,
     note: Option<String>,
 }
 
@@ -435,15 +436,25 @@ impl Overview {
                     if hardware.sections.is_empty() {
                         caption(ui, "Additional device details unavailable.");
                     }
-                    for pair in hardware.sections.chunks(2) {
-                        ui.columns(2, |cols| {
-                            for (col, (title, value)) in cols.iter_mut().zip(pair) {
-                                field(col, title, value);
-                            }
-                        });
-                        ui.add_space(8.0);
+                    if ui.available_width() >= 640.0 {
+                        for pair in hardware.sections.chunks(2) {
+                            ui.columns(2, |cols| {
+                                for (col, (title, value)) in cols.iter_mut().zip(pair) {
+                                    inventory_card(col, title, value, hardware.memory_summary.as_deref());
+                                }
+                            });
+                            ui.add_space(8.0);
+                        }
+                    } else {
+                        for (title, value) in &hardware.sections {
+                            inventory_card(ui, title, value, hardware.memory_summary.as_deref());
+                            ui.add_space(8.0);
+                        }
                     }
-                    if let Some(note) = &hardware.note { caption(ui, note); }
+                    if let Some(note) = &hardware.note {
+                        ui.add_space(4.0);
+                        caption(ui, note);
+                    }
                 } else {
                     ui.horizontal(|ui| { ui.spinner(); caption(ui, "Reading graphics, motherboard, memory modules, and connected devices…"); });
                 }
@@ -453,11 +464,16 @@ impl Overview {
                 ui.add_space(10.0);
                 if s.networks.is_empty() { caption(ui, "No network interfaces reported."); }
                 for (name, address, received, sent) in &s.networks {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(name).strong());
-                        ui.label(RichText::new(format!("Receive {}/s    Send {}/s", bytes(*received as u64), bytes(*sent as u64))).color(CYAN));
+                    panel(PANEL, 14).stroke(Stroke::new(1.0_f32, LINE)).corner_radius(5).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add(egui::Label::new(RichText::new(name).size(14.0).strong()).wrap().selectable(true));
+                        ui.add(egui::Label::new(RichText::new(address).size(12.0).color(MUTED)).wrap().selectable(true));
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            badge(ui, &format!("RECEIVE  {}/s", bytes(*received as u64)), CYAN);
+                            badge(ui, &format!("SEND  {}/s", bytes(*sent as u64)), CYAN);
+                        });
                     });
-                    ui.add(egui::Label::new(RichText::new(address).size(11.0).color(MUTED)).wrap().selectable(true));
                     ui.add_space(8.0);
                 }
                 ui.add_space(10.0);
@@ -557,6 +573,67 @@ impl Overview {
             ui.add_space(8.0);
         }
     }
+}
+
+fn inventory_card(ui: &mut egui::Ui, title: &str, value: &str, memory_summary: Option<&str>) {
+    panel(PANEL, 14)
+        .stroke(Stroke::new(1.0_f32, LINE))
+        .corner_radius(5)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(RichText::new(title.to_uppercase()).size(11.0).color(CYAN));
+            ui.add_space(6.0);
+            if title == "Memory modules" {
+                ui.horizontal_wrapped(|ui| {
+                    for detail in memory_summary
+                        .unwrap_or("Kit details unavailable / CL unavailable")
+                        .split(" / ")
+                    {
+                        badge(ui, detail, CYAN);
+                    }
+                });
+                ui.add_space(10.0);
+                caption(ui, "MODULES");
+                ui.add_space(4.0);
+            }
+            let items: Vec<_> = value
+                .split("; ")
+                .filter(|item| !item.trim().is_empty())
+                .collect();
+            let multiple = items.len() > 1;
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(8.0);
+                    rule(ui);
+                    ui.add_space(8.0);
+                }
+                let mut parts = item
+                    .split(" / ")
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty());
+                if let Some(primary) = parts.next() {
+                    ui.horizontal_top(|ui| {
+                        if multiple {
+                            ui.label(RichText::new("•").color(CYAN));
+                        }
+                        ui.vertical(|ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(primary).size(13.0).strong())
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                            for detail in parts {
+                                ui.add(
+                                    egui::Label::new(RichText::new(detail).size(12.0).color(MUTED))
+                                        .wrap()
+                                        .selectable(true),
+                                );
+                            }
+                        });
+                    });
+                }
+            }
+        });
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
@@ -691,8 +768,32 @@ try {
         Write-Output ("GPU card`t" + $model + "`t" + $capacity)
     }
 } catch {}
-Report 'Memory modules' 'Win32_PhysicalMemory' { "$($_.DeviceLocator): $([math]::Round($_.Capacity / 1GB, 1)) GiB / $($_.ConfiguredClockSpeed) MHz / $($_.Manufacturer) $($_.PartNumber.Trim())" }
-Report 'Physical drives' 'Win32_DiskDrive' { "$($_.Model) / $([math]::Round($_.Size / 1GB, 1)) GiB / $($_.InterfaceType)" }
+Report 'Memory modules' 'Win32_PhysicalMemory' { "$($_.DeviceLocator): $([math]::Round($_.Capacity / 1GB, 1)) GiB / $($_.ConfiguredClockSpeed) MT/s / $($_.Manufacturer) $($_.PartNumber.Trim())" }
+try {
+    $modules = @(Get-CimInstance Win32_PhysicalMemory)
+    if ($modules.Count) {
+        $capacity = ($modules | Measure-Object Capacity -Sum).Sum
+        $speeds = @($modules | ForEach-Object { $_.ConfiguredClockSpeed } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+        $types = @($modules | ForEach-Object { switch ([int]$_.SMBIOSMemoryType) { 24 { 'DDR3' } 26 { 'DDR4' } 34 { 'DDR5' } } } | Sort-Object -Unique)
+        $details = @()
+        if ($capacity -gt 0) { $details += ("{0:0.#} GiB installed" -f ($capacity / 1GB)) }
+        if ($types.Count) { $details += ($types -join ', ') }
+        if ($speeds.Count) { $details += (($speeds -join ', ') + ' MT/s configured') } else { $details += 'Speed unavailable' }
+        $details += 'CL unavailable'
+        Write-Output ("Memory summary`t" + ($details -join ' / '))
+    }
+} catch {}
+Report 'Physical drives' 'Win32_DiskDrive' {
+    $disk = $_
+    if (-not $disk.Size -or $disk.Size -le 0 -or [string]::IsNullOrWhiteSpace($disk.Model)) { return }
+    $letters = @($disk | Get-CimAssociatedInstance -Association Win32_DiskDriveToDiskPartition -ErrorAction SilentlyContinue | ForEach-Object {
+        $_ | Get-CimAssociatedInstance -Association Win32_LogicalDiskToPartition -ErrorAction SilentlyContinue
+    } | ForEach-Object {
+        if ($_.DeviceID -ieq $env:SystemDrive) { "$($_.DeviceID) (System)" } else { $_.DeviceID }
+    } | Sort-Object -Unique)
+    $volumes = if ($letters.Count) { 'Volumes: ' + ($letters -join ', ') } else { 'No drive letters reported' }
+    "$($disk.Model) / $volumes / $([math]::Round($disk.Size / 1GB, 1)) GiB / $($disk.InterfaceType)"
+}
 Report 'Firmware' 'Win32_BIOS' { "$($_.Manufacturer) / $($_.SMBIOSBIOSVersion)" }
 Report 'Displays' 'Win32_DesktopMonitor' { "$($_.Name) / $($_.MonitorManufacturer)" }
 Report 'Audio' 'Win32_SoundDevice' { $_.Name }
@@ -747,6 +848,7 @@ Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
     })();
     match result {
         Ok(output) => Hardware {
+            memory_summary: output.lines().find_map(|line| line.strip_prefix("Memory summary\t").map(str::to_owned)),
             gpu_card: output.lines().find_map(|line| {
                 let value = line.strip_prefix("GPU card\t")?;
                 let (model, capacity) = value.split_once('\t')?;
@@ -754,7 +856,7 @@ Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
             }),
             sections: output
                 .lines()
-                .filter(|line| !line.starts_with("GPU card\t"))
+                .filter(|line| !line.starts_with("GPU card\t") && !line.starts_with("Memory summary\t"))
                 .filter_map(|line| {
                     line.split_once('\t')
                         .map(|(k, v)| (k.to_owned(), v.trim().to_owned()))
@@ -766,6 +868,7 @@ Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
             ),
         },
         Err(note) => Hardware {
+            memory_summary: None,
             gpu_card: None,
             sections: Vec::new(),
             note: Some(note),
@@ -775,7 +878,7 @@ Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
 
 #[cfg(not(windows))]
 fn hardware_inventory() -> Hardware {
-    Hardware { gpu_card: None, sections: vec![("Architecture".into(), System::cpu_arch()), ("Kernel".into(), System::kernel_version().unwrap_or_else(|| "Unavailable".into()))], note: Some("Extended graphics, motherboard, firmware, and memory module inventory is currently available on Windows. Processor, memory, mounted storage, network, and supported temperature sensors are shown above.".into()) }
+    Hardware { memory_summary: None, gpu_card: None, sections: vec![("Architecture".into(), System::cpu_arch()), ("Kernel".into(), System::kernel_version().unwrap_or_else(|| "Unavailable".into()))], note: Some("Extended graphics, motherboard, firmware, and memory module inventory is currently available on Windows. Processor, memory, mounted storage, network, and supported temperature sensors are shown above.".into()) }
 }
 
 #[cfg(test)]
@@ -794,6 +897,7 @@ mod tests {
         assert!(show_gpu(None, None), "inventory is still loading");
         for value in ["", "  ", "Unavailable", "Not reported"] {
             let hardware = Hardware {
+                memory_summary: None,
                 gpu_card: None,
                 sections: vec![("Graphics".into(), value.into())],
                 note: None,
@@ -805,6 +909,7 @@ mod tests {
             );
         }
         let hardware = Hardware {
+            memory_summary: None,
             gpu_card: None,
             sections: vec![("Graphics".into(), "Example GPU / driver 1.0".into())],
             note: None,
@@ -818,6 +923,7 @@ mod tests {
             Some("Example GPU / driver 1.0")
         );
         let failed = Hardware {
+            memory_summary: None,
             gpu_card: None,
             sections: Vec::new(),
             note: Some("Inventory failed".into()),

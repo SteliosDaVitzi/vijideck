@@ -233,26 +233,63 @@ impl VijiDeck {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(22.0);
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(122.0, 38.0),
-                            egui::Sense::click(),
-                        );
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(122.0, 38.0), egui::Sense::click());
                         let hovered = response.hovered() || response.has_focus();
                         let painter = ui.painter();
-                        painter.rect_filled(rect, 19, if hovered {
-                            egui::Color32::from_rgb(30, 65, 73)
-                        } else {
-                            egui::Color32::from_rgb(18, 42, 49)
-                        });
-                        painter.rect_stroke(rect, 19, Stroke::new(1.0_f32, CYAN.gamma_multiply(if hovered { 0.8 } else { 0.35 })), egui::StrokeKind::Inside);
+                        painter.rect_filled(
+                            rect,
+                            19,
+                            if hovered {
+                                egui::Color32::from_rgb(30, 65, 73)
+                            } else {
+                                egui::Color32::from_rgb(18, 42, 49)
+                            },
+                        );
+                        painter.rect_stroke(
+                            rect,
+                            19,
+                            Stroke::new(
+                                1.0_f32,
+                                CYAN.gamma_multiply(if hovered { 0.8 } else { 0.35 }),
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
                         let icon_center = rect.left_center() + egui::vec2(20.0, 0.0);
                         painter.circle_filled(icon_center, 12.0, CYAN.gamma_multiply(0.15));
-                        let icon_rect = egui::Rect::from_center_size(icon_center, egui::vec2(13.0, 10.0));
-                        painter.rect_stroke(icon_rect, 2, Stroke::new(1.4_f32, CYAN), egui::StrokeKind::Inside);
-                        painter.line_segment([icon_center + egui::vec2(-4.0, 1.5), icon_center + egui::vec2(0.0, -1.5)], Stroke::new(1.2_f32, CYAN));
-                        painter.line_segment([icon_center + egui::vec2(0.0, -1.5), icon_center + egui::vec2(4.0, 1.0)], Stroke::new(1.2_f32, CYAN));
-                        painter.text(rect.left_center() + egui::vec2(39.0, 0.0), egui::Align2::LEFT_CENTER, "Widget", egui::FontId::proportional(13.0), TEXT);
-                        if response.on_hover_text("Keep monitoring in a floating widget").clicked() {
+                        let icon_rect =
+                            egui::Rect::from_center_size(icon_center, egui::vec2(13.0, 10.0));
+                        painter.rect_stroke(
+                            icon_rect,
+                            2,
+                            Stroke::new(1.4_f32, CYAN),
+                            egui::StrokeKind::Inside,
+                        );
+                        painter.line_segment(
+                            [
+                                icon_center + egui::vec2(-4.0, 1.5),
+                                icon_center + egui::vec2(0.0, -1.5),
+                            ],
+                            Stroke::new(1.2_f32, CYAN),
+                        );
+                        painter.line_segment(
+                            [
+                                icon_center + egui::vec2(0.0, -1.5),
+                                icon_center + egui::vec2(4.0, 1.0),
+                            ],
+                            Stroke::new(1.2_f32, CYAN),
+                        );
+                        painter.text(
+                            rect.left_center() + egui::vec2(39.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            "Widget",
+                            egui::FontId::proportional(13.0),
+                            TEXT,
+                        );
+                        if response
+                            .on_hover_text("Keep monitoring in a floating widget")
+                            .clicked()
+                        {
                             self.background
                                 .apply(crate::background::Action::Widget, ctx);
                         }
