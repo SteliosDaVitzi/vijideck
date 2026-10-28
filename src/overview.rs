@@ -197,6 +197,8 @@ impl Overview {
 
     pub fn widget(&self, ctx: &egui::Context, can_hide: bool) -> Option<crate::background::Action> {
         use crate::background::Action;
+        #[cfg(not(windows))]
+        let _ = can_hide;
         let mut action = None;
         egui::CentralPanel::default()
             .frame(
@@ -216,8 +218,16 @@ impl Overview {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("VIJIDECK").size(10.0).strong().color(MUTED));
+                    ui.label(RichText::new("VIJIDECK").size(12.0).strong().color(TEXT));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        if Self::widget_button(ui, "Close app", 2).clicked() {
+                            action = Some(Action::Quit);
+                        }
+                        if Self::widget_button(ui, "Go to app", 1).clicked() {
+                            action = Some(Action::Open);
+                        }
+                        #[cfg(windows)]
                         if can_hide && Self::minimize_button(ui).clicked() {
                             action = Some(Action::Hide);
                         }
@@ -290,12 +300,17 @@ impl Overview {
         );
     }
 
+    #[cfg(windows)]
     fn minimize_button(ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 24.0), egui::Sense::click());
+        Self::widget_button(ui, "Minimize to tray", 0)
+    }
+
+    fn widget_button(ui: &mut egui::Ui, tooltip: &str, icon: u8) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(23.0, 21.0), egui::Sense::click());
         let visuals = ui.style().interact(&response);
         ui.painter().rect(
             rect,
-            7,
+            5,
             visuals.bg_fill,
             Stroke::new(
                 1.0_f32,
@@ -308,14 +323,50 @@ impl Overview {
             egui::StrokeKind::Inside,
         );
         let center = rect.center();
-        ui.painter().line_segment(
-            [
-                center + egui::vec2(-4.0, 2.0),
-                center + egui::vec2(4.0, 2.0),
-            ],
-            Stroke::new(1.6_f32, if response.hovered() { CYAN } else { TEXT }),
-        );
-        response.on_hover_text("Minimize to tray")
+        let stroke = Stroke::new(1.6_f32, if response.hovered() { CYAN } else { TEXT });
+        match icon {
+            0 => {
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(-4.0, 2.0),
+                        center + egui::vec2(4.0, 2.0),
+                    ],
+                    stroke,
+                );
+            }
+            1 => {
+                ui.painter().rect_stroke(
+                    egui::Rect::from_center_size(center, egui::vec2(11.0, 9.0)),
+                    1,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(-5.0, -1.0),
+                        center + egui::vec2(5.0, -1.0),
+                    ],
+                    stroke,
+                );
+            }
+            _ => {
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(-4.0, -4.0),
+                        center + egui::vec2(4.0, 4.0),
+                    ],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [
+                        center + egui::vec2(4.0, -4.0),
+                        center + egui::vec2(-4.0, 4.0),
+                    ],
+                    stroke,
+                );
+            }
+        }
+        response.on_hover_text(tooltip)
     }
 
     #[cfg(feature = "ui-preview")]

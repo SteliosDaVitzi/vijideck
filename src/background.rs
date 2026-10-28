@@ -4,6 +4,7 @@ use eframe::egui;
 pub enum Action {
     Open,
     Widget,
+    #[cfg(windows)]
     Hide,
     Quit,
 }
@@ -23,6 +24,7 @@ pub struct Background {
     hwnd: isize,
     #[cfg(windows)]
     rounded_region: Option<(i32, i32)>,
+    #[cfg(windows)]
     pub error: Option<String>,
 }
 
@@ -55,12 +57,8 @@ impl Background {
                     "../Glossy Donut Chart in Blue Tray.png"
                 ))?
                 .to_rgba8();
-                let image = image::imageops::resize(
-                    &image,
-                    32,
-                    32,
-                    image::imageops::FilterType::Lanczos3,
-                );
+                let image =
+                    image::imageops::resize(&image, 32, 32, image::imageops::FilterType::Lanczos3);
                 let (width, height) = image.dimensions();
                 Ok(TrayIconBuilder::new()
                     .with_tooltip("VijiDeck — system monitor")
@@ -130,25 +128,14 @@ impl Background {
             rounded_region: None,
             #[cfg(windows)]
             error,
-            #[cfg(not(windows))]
-            error: None,
         }
     }
 
     pub fn poll(&mut self, ctx: &egui::Context) {
+        #[cfg(not(windows))]
+        let _ = ctx;
         #[cfg(windows)]
         while let Ok(action) = self.events.try_recv() {
-            self.apply(action, ctx);
-        }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            let action = if !self.compact {
-                Action::Widget
-            } else if self.can_hide() {
-                Action::Hide
-            } else {
-                Action::Open
-            };
             self.apply(action, ctx);
         }
     }
@@ -261,11 +248,13 @@ impl Background {
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
                 }
             }
+            #[cfg(windows)]
             Action::Hide if self.can_hide() => {
                 self.widget_position = ctx.input(|i| i.viewport().outer_rect.map(|r| r.min));
                 self.widget_visible = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
+            #[cfg(windows)]
             Action::Hide => {}
             Action::Quit => {
                 self.quitting = true;
