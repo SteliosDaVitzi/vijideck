@@ -191,7 +191,12 @@ pub fn port_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
 
 pub fn disk_glyph(p: &egui::Painter, rect: egui::Rect, color: Color32) {
     let r = rect.shrink(rect.width() * 0.12);
-    p.rect_stroke(r, 3.0, Stroke::new(1.3_f32, color), egui::StrokeKind::Inside);
+    p.rect_stroke(
+        r,
+        3.0,
+        Stroke::new(1.3_f32, color),
+        egui::StrokeKind::Inside,
+    );
     let y = r.bottom() - r.height() * 0.25;
     p.line_segment(
         [egui::pos2(r.left(), y), egui::pos2(r.right(), y)],
@@ -255,7 +260,12 @@ pub fn logs_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
         );
     }
     let page = rect.shrink(13.0);
-    painter.rect_stroke(page, 2.0, Stroke::new(1.3_f32, color), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        page,
+        2.0,
+        Stroke::new(1.3_f32, color),
+        egui::StrokeKind::Inside,
+    );
     for y in [-4.0, 0.0, 4.0] {
         painter.line_segment(
             [

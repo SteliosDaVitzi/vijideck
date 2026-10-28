@@ -65,8 +65,23 @@ pub struct Entry {
 }
 impl Entry {
     #[cfg(test)]
-    pub(crate) fn test_entry(time: String, level: String, source: String, message: String, raw: String, search: String) -> Self {
-        Self { time, level, source, message, raw, search, details: OnceLock::new() }
+    pub(crate) fn test_entry(
+        time: String,
+        level: String,
+        source: String,
+        message: String,
+        raw: String,
+        search: String,
+    ) -> Self {
+        Self {
+            time,
+            level,
+            source,
+            message,
+            raw,
+            search,
+            details: OnceLock::new(),
+        }
     }
 
     pub fn details(&self) -> &str {

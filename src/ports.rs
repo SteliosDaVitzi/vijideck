@@ -105,11 +105,7 @@ pub fn scan(system: &mut System) -> Snapshot {
     // Keep only sysinfo's lightweight process inventory for the whole system.
     // Detailed command lines, paths, users, and counters are needed only for
     // processes currently attached to a socket.
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let pids: Vec<_> = ports
         .iter()
         .filter_map(|port| port.key.pid.map(Pid::from_u32))
