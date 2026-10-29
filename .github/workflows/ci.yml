@@ -24,7 +24,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install innosetup --version=6.4.3 --allow-downgrade --yes --no-progress
+          choco install innosetup --version=6.4.0 --allow-downgrade --yes --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: cargo fmt --check
       - run: cargo fmt --manifest-path xtask/Cargo.toml --check
