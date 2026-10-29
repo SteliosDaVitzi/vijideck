@@ -101,10 +101,10 @@ impl Processes {
                                             icons.insert(path.clone(), icon);
                                             icon_order.push_back(path.clone());
                                             icons_loaded += 1;
-                                            if icon_order.len() > 128 {
-                                                if let Some(expired) = icon_order.pop_front() {
-                                                    icons.remove(&expired);
-                                                }
+                                            if icon_order.len() > 128
+                                                && let Some(expired) = icon_order.pop_front()
+                                            {
+                                                icons.remove(&expired);
                                             }
                                         }
                                         icons.get(&path).cloned().flatten()
@@ -472,14 +472,14 @@ fn executable_icon(path: &std::path::Path) -> Option<egui::ColorImage> {
         let old = SelectObject(dc, bitmap);
         // Render on the opaque row background so legacy mask-only icons also display correctly.
         let pixels = std::slice::from_raw_parts_mut(bits.cast::<u8>(), 32 * 32 * 4);
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&[18, 13, 8, 255]);
         }
         let drawn = DrawIconEx(dc, 0, 0, info.hIcon, 32, 32, 0, null_mut(), DI_NORMAL);
         GdiFlush();
         let pixels = std::slice::from_raw_parts(bits.cast::<u8>(), 32 * 32 * 4);
         let mut rgba = Vec::with_capacity(pixels.len());
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
         }
         SelectObject(dc, old);

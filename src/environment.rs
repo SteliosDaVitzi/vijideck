@@ -388,12 +388,11 @@ impl Environment {
                                                                 ui.close();
                                                             }
                                                         }
-                                                        if let Some(url) = release_url(e.name) {
-                                                            if ui.button("Official releases / downloads").clicked() {
+                                                        if let Some(url) = release_url(e.name)
+                                                            && ui.button("Official releases / downloads").clicked() {
                                                                 ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                                                                 ui.close();
                                                             }
-                                                        }
                                                     });
                                                 let (rect, copy) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
                                                 if copy.hovered() || copy.has_focus() { ui.painter().rect_filled(rect, 4.0, LINE); }
@@ -459,18 +458,18 @@ fn group_aliases<'a>(entries: &[&'a Entry]) -> Vec<Vec<&'a Entry>> {
             "pip" | "pip3" => Some("pip"),
             _ => None,
         };
-        if let Some(key) = alias {
-            if let Some(group) = groups.iter_mut().find(|group| {
+        if let Some(key) = alias
+            && let Some(group) = groups.iter_mut().find(|group| {
                 let first = group[0];
                 matches!((key, first.name), ("pip", "pip" | "pip3"))
                     && !first.version.starts_with("Version unavailable")
                     && first.version == entry.version
                     && first.path.parent() == entry.path.parent()
                     && first.name != entry.name
-            }) {
-                group.push(entry);
-                continue;
-            }
+            })
+        {
+            group.push(entry);
+            continue;
         }
         groups.push(vec![entry]);
     }
@@ -742,60 +741,6 @@ fn is_link(path: &Path) -> bool {
     }
 }
 
-#[cfg(test)]
-mod discovery_tests {
-    use super::*;
-    #[test]
-    fn groups_pip_aliases_only_for_same_verified_installation() {
-        let entry = |name, path: &str, version: &str| Entry {
-            name,
-            path: PathBuf::from(path),
-            on_path: true,
-            version: version.into(),
-        };
-        let pip = entry(
-            "pip",
-            "python/Scripts/pip.exe",
-            "pip 25.3 from site-packages",
-        );
-        let pip3 = entry(
-            "pip3",
-            "python/Scripts/pip3.exe",
-            "pip 25.3 from site-packages",
-        );
-        let other = entry(
-            "pip3",
-            "other/Scripts/pip3.exe",
-            "pip 25.3 from site-packages",
-        );
-        let groups = group_aliases(&[&pip, &pip3, &other]);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].len(), 2);
-        let unknown = entry("pip3", "python/Scripts/pip3.exe", "Version unavailable");
-        let unknown_pip = entry("pip", "python/Scripts/pip.exe", "Version unavailable");
-        assert_eq!(group_aliases(&[&unknown_pip, &unknown]).len(), 2);
-    }
-    #[test]
-    fn discovers_nested_installations_and_skips_project_dependencies() {
-        let root = std::env::temp_dir().join(format!("vijideck-env-test-{}", std::process::id()));
-        let nested = root.join("versions").join("python").join("bin");
-        let skipped = root.join("project").join("node_modules").join("bin");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::create_dir_all(&skipped).unwrap();
-        let filename = if cfg!(windows) {
-            "python.exe"
-        } else {
-            "python"
-        };
-        std::fs::write(nested.join(filename), "test").unwrap();
-        std::fs::write(skipped.join(filename), "test").unwrap();
-        let found = discover_candidates(std::slice::from_ref(&root), &mut |_| {});
-        let python = TOOLS.iter().position(|s| s.exe == "python").unwrap();
-        assert!(found[python].contains(&nested.join(filename)));
-        assert!(!found[python].contains(&skipped.join(filename)));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
 fn version(path: &Path, args: &str) -> String {
     // Batch wrappers require a command interpreter. Avoid executing them implicitly.
     if matches!(
@@ -849,5 +794,60 @@ fn version(path: &Path, args: &str) -> String {
                 return "Version unavailable (timed out)".into();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    #[test]
+    fn groups_pip_aliases_only_for_same_verified_installation() {
+        let entry = |name, path: &str, version: &str| Entry {
+            name,
+            path: PathBuf::from(path),
+            on_path: true,
+            version: version.into(),
+        };
+        let pip = entry(
+            "pip",
+            "python/Scripts/pip.exe",
+            "pip 25.3 from site-packages",
+        );
+        let pip3 = entry(
+            "pip3",
+            "python/Scripts/pip3.exe",
+            "pip 25.3 from site-packages",
+        );
+        let other = entry(
+            "pip3",
+            "other/Scripts/pip3.exe",
+            "pip 25.3 from site-packages",
+        );
+        let groups = group_aliases(&[&pip, &pip3, &other]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].len(), 2);
+        let unknown = entry("pip3", "python/Scripts/pip3.exe", "Version unavailable");
+        let unknown_pip = entry("pip", "python/Scripts/pip.exe", "Version unavailable");
+        assert_eq!(group_aliases(&[&unknown_pip, &unknown]).len(), 2);
+    }
+    #[test]
+    fn discovers_nested_installations_and_skips_project_dependencies() {
+        let root = std::env::temp_dir().join(format!("vijideck-env-test-{}", std::process::id()));
+        let nested = root.join("versions").join("python").join("bin");
+        let skipped = root.join("project").join("node_modules").join("bin");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&skipped).unwrap();
+        let filename = if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        };
+        std::fs::write(nested.join(filename), "test").unwrap();
+        std::fs::write(skipped.join(filename), "test").unwrap();
+        let found = discover_candidates(std::slice::from_ref(&root), &mut |_| {});
+        let python = TOOLS.iter().position(|s| s.exe == "python").unwrap();
+        assert!(found[python].contains(&nested.join(filename)));
+        assert!(!found[python].contains(&skipped.join(filename)));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
