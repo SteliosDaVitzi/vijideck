@@ -99,7 +99,14 @@ fn windows(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path) ->
     Ok(())
 }
 
-fn macos(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path, stage: &Path) -> Result {
+fn macos(
+    binary: &Path,
+    out: &Path,
+    version: &str,
+    arch: &str,
+    root: &Path,
+    stage: &Path,
+) -> Result {
     let image = stage.join("image");
     let app = image.join(format!("{TITLE}.app"));
     let contents = app.join("Contents");
@@ -169,7 +176,14 @@ fn macos(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path, stag
     Ok(())
 }
 
-fn linux(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path, stage: &Path) -> Result {
+fn linux(
+    binary: &Path,
+    out: &Path,
+    version: &str,
+    arch: &str,
+    root: &Path,
+    stage: &Path,
+) -> Result {
     let package = stage.join("package");
     let installed = package.join("usr/bin").join(NAME);
     fs::create_dir_all(installed.parent().ok_or("Missing parent")?)?;
@@ -220,8 +234,15 @@ fn linux(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path, stag
     fs::copy(binary, portable.join(NAME))?;
     fs::copy(desktop, portable.join(format!("{NAME}.desktop")))?;
     let portable_icon = portable.join(format!("share/icons/hicolor/1024x1024/apps/{NAME}.png"));
-    fs::create_dir_all(portable_icon.parent().ok_or("Missing portable icon parent")?)?;
-    fs::copy(root.join("Glossy Donut Chart in Blue Tray.png"), portable_icon)?;
+    fs::create_dir_all(
+        portable_icon
+            .parent()
+            .ok_or("Missing portable icon parent")?,
+    )?;
+    fs::copy(
+        root.join("Glossy Donut Chart in Blue Tray.png"),
+        portable_icon,
+    )?;
     run(Command::new("tar")
         .arg("-czf")
         .arg(out.join(format!("{NAME}-{version}-linux-{arch}.tar.gz")))
