@@ -4,6 +4,8 @@ mod app;
 mod background;
 mod cleanup;
 mod cleanup_ui;
+mod environment;
+mod environment_path;
 mod gpu;
 mod logs;
 mod logs_access;

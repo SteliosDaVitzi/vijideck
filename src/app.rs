@@ -26,6 +26,7 @@ pub struct VijiDeck {
     overview: crate::overview::Overview,
     cleanup: crate::cleanup_ui::Cleanup,
     logs: crate::logs_ui::Logs,
+    environment: crate::environment::Environment,
     tx: Sender<Command>,
     rx: Receiver<Event>,
     snapshot: Snapshot,
@@ -81,6 +82,7 @@ impl VijiDeck {
             overview: crate::overview::Overview::new(cc.egui_ctx.clone()),
             cleanup: crate::cleanup_ui::Cleanup::new(),
             logs: crate::logs_ui::Logs::new(),
+            environment: crate::environment::Environment::new(),
             tx,
             rx,
             snapshot,
@@ -122,6 +124,7 @@ impl VijiDeck {
             match std::env::var("VIJIDECK_PREVIEW_VIEW").as_deref() {
                 Ok("overview" | "overview-hardware" | "widget") => self.active_tool = 2,
                 Ok("processes") => self.active_tool = 4,
+                Ok("environment") => self.active_tool = 5,
                 Ok("logs") => self.active_tool = 3,
                 Ok("logs-list") => {
                     self.active_tool = 3;
@@ -174,6 +177,7 @@ impl VijiDeck {
         };
         // Let layout, modal sizing, worker results, and hover state settle.
         let ready = match self.active_tool {
+            5 => self.environment.preview_ready(),
             4 => self.processes.preview_ready(),
             2 => self.overview.preview_ready(),
             3 => self.logs.preview_ready(),
@@ -219,6 +223,8 @@ impl VijiDeck {
                             "Port manager"
                         } else if self.active_tool == 1 {
                             "Disk cleanup"
+                        } else if self.active_tool == 5 {
+                            "Developer environment"
                         } else if self.active_tool == 3 || self.active_tool == 4 {
                             if self.active_tool == 4 {
                                 "Processes"
@@ -359,6 +365,13 @@ impl VijiDeck {
                         self.active_tool = 4;
                     }
                 });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if environment_icon(ui, self.active_tool == 5).clicked() {
+                        self.active_tool = 5;
+                    }
+                });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(18.0);
                     caption(ui, "v0.1");
@@ -384,7 +397,9 @@ impl VijiDeck {
                         },
                     );
                     ui.label(
-                        RichText::new(if self.active_tool == 1 {
+                        RichText::new(if self.active_tool == 5 {
+                            self.environment.status()
+                        } else if self.active_tool == 1 {
                             self.cleanup.status()
                         } else if self.active_tool == 2 {
                             self.overview.status()
@@ -411,7 +426,9 @@ impl VijiDeck {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(20.0);
                         ui.label(
-                            RichText::new(if self.active_tool == 1 {
+                            RichText::new(if self.active_tool == 5 {
+                                "Local environment / read only".to_owned()
+                            } else if self.active_tool == 1 {
                                 "Local files / no automatic deletion".to_owned()
                             } else if self.active_tool == 2 {
                                 "Hardware / local telemetry".to_owned()
@@ -1127,6 +1144,12 @@ impl eframe::App for VijiDeck {
         self.top_bar(ctx);
         self.status_bar(ctx);
         self.tool_rail(ctx);
+        if self.active_tool == 5 {
+            self.environment.show(ctx);
+            #[cfg(feature = "ui-preview")]
+            self.capture_preview(ctx);
+            return;
+        }
         if self.active_tool == 4 {
             self.processes.show(ctx);
             #[cfg(feature = "ui-preview")]

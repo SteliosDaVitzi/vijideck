@@ -236,6 +236,51 @@ pub fn cleanup_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     response.on_hover_text("Disk cleanup")
 }
 
+pub fn environment_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(44.0), egui::Sense::click());
+    let active = selected || response.hovered() || response.has_focus();
+    let color = if active { CYAN } else { MUTED };
+    let p = ui.painter();
+    p.rect_filled(
+        rect,
+        5.0,
+        if active {
+            Color32::from_rgb(17, 39, 48)
+        } else {
+            PANEL
+        },
+    );
+    if selected {
+        p.line_segment(
+            [
+                rect.left_top() + egui::vec2(0.0, 9.0),
+                rect.left_bottom() - egui::vec2(0.0, 9.0),
+            ],
+            Stroke::new(2.0_f32, CYAN),
+        );
+    }
+    let c = rect.center();
+    p.rect_stroke(
+        rect.shrink(11.0),
+        2.0,
+        Stroke::new(1.3_f32, color),
+        egui::StrokeKind::Inside,
+    );
+    p.add(egui::Shape::line(
+        vec![
+            c + egui::vec2(-6.0, -3.0),
+            c + egui::vec2(-2.0, 0.0),
+            c + egui::vec2(-6.0, 3.0),
+        ],
+        Stroke::new(1.4_f32, color),
+    ));
+    p.line_segment(
+        [c + egui::vec2(1.0, 4.0), c + egui::vec2(7.0, 4.0)],
+        Stroke::new(1.4_f32, color),
+    );
+    response.on_hover_text("Developer environment")
+}
+
 pub fn logs_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(44.0), egui::Sense::click());
     let active = selected || response.hovered() || response.has_focus();
