@@ -345,7 +345,7 @@ fn main() -> Result {
                 .is_some_and(|name| name != "SHA256SUMS.txt")
     }) {
         let output = if os == "windows" {
-            run(Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; (Get-FileHash -LiteralPath $env:VIJIDECK_PACKAGE -Algorithm SHA256).Hash"]).env("VIJIDECK_PACKAGE", &path))?
+            run(Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $stream = [System.IO.File]::OpenRead($env:VIJIDECK_PACKAGE); $sha256 = [System.Security.Cryptography.SHA256]::Create(); try { [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') } finally { $sha256.Dispose(); $stream.Dispose() }"]).env("VIJIDECK_PACKAGE", &path))?
         } else if os == "macos" {
             run(Command::new("shasum").args(["-a", "256"]).arg(&path))?
         } else {
