@@ -64,7 +64,7 @@ pub struct Entry {
     details: OnceLock<String>,
 }
 impl Entry {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "ui-preview"))]
     pub(crate) fn test_entry(
         time: String,
         level: String,

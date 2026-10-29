@@ -37,15 +37,15 @@ impl Logs {
             note: "Sample events for UI preview. Search filters loaded entries.".into(),
             access_limited: false,
             entries: (0..80)
-                .map(|i| logs::Entry {
-                    time: format!("2026-10-26 14:{:02}:00", 59 - i % 60),
-                    level: if i % 7 == 0 { "Warning" } else { "Info" }.into(),
-                    source: format!("Sample system service / {}", 7000 + i),
-                    message: format!("Sample event {i}: service state updated successfully."),
-                    details: format!(
-                        "Sample event {i}\nService state: Running\nThis is preview data."
-                    ),
-                    search: format!("sample event {i}"),
+                .map(|i| {
+                    logs::Entry::test_entry(
+                        format!("2026-10-26 14:{:02}:00", 59 - i % 60),
+                        if i % 7 == 0 { "Warning" } else { "Info" }.into(),
+                        format!("Sample system service / {}", 7000 + i),
+                        format!("Sample event {i}: service state updated successfully."),
+                        format!("Sample event {i}\nService state: Running\nThis is preview data."),
+                        format!("sample event {i}"),
+                    )
                 })
                 .collect(),
         });

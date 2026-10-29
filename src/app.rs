@@ -485,7 +485,7 @@ impl VijiDeck {
                         ui.add_space(20.0);
                         ui.label(
                             RichText::new(if self.active_tool == 5 {
-                                "Local environment / read only".to_owned()
+                                "Local environment".to_owned()
                             } else if self.active_tool == 1 {
                                 "Local files / no automatic deletion".to_owned()
                             } else if self.active_tool == 2 {

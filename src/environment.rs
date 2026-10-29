@@ -230,6 +230,8 @@ enum ScanEvent {
 }
 
 pub struct Environment {
+    tab: usize,
+    variables: crate::environment_variables::Variables,
     entries: Vec<Entry>,
     rx: Option<Receiver<ScanEvent>>,
     current_dir: Option<PathBuf>,
@@ -242,6 +244,14 @@ pub struct Environment {
 impl Environment {
     pub fn new() -> Self {
         Self {
+            tab: if cfg!(feature = "ui-preview")
+                && std::env::var_os("VIJIDECK_PREVIEW_VARIABLES").is_some()
+            {
+                1
+            } else {
+                0
+            },
+            variables: Default::default(),
             entries: Vec::new(),
             rx: None,
             current_dir: None,
@@ -342,10 +352,10 @@ impl Environment {
     }
     #[cfg(feature = "ui-preview")]
     pub fn preview_ready(&self) -> bool {
-        self.scanned && self.rx.is_none()
+        self.tab == 1 || (self.scanned && self.rx.is_none())
     }
     pub fn show(&mut self, ctx: &egui::Context) {
-        if !self.scanned && self.rx.is_none() {
+        if self.tab == 0 && !self.scanned && self.rx.is_none() {
             self.scanned = true;
             self.scan(ctx);
         }
@@ -370,12 +380,19 @@ impl Environment {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.heading("Developer environment");
-                    ui.label(RichText::new("Installed runtimes, package managers and tools").color(MUTED));
+                    ui.label(RichText::new("Installed tools and operating system settings").color(MUTED));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(self.rx.is_none(), egui::Button::new("Refresh")).clicked() { self.scan(ctx); }
+                    if self.tab == 0 && ui.add_enabled(self.rx.is_none(), egui::Button::new("Refresh")).clicked() { self.scan(ctx); }
                 });
             });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.tab, 0, "Runtimes & tools");
+                ui.selectable_value(&mut self.tab, 1, "Environment variables");
+            });
+            ui.add_space(12.0);
+            if self.tab == 1 { self.variables.show(ui); return; }
             ui.add_space(18.0);
             let focus_search = ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
             ui.horizontal(|ui| {
@@ -483,7 +500,7 @@ impl Environment {
                                 ui.add_space(6.0);
                                 egui::Frame::new().fill(PANEL).corner_radius(5).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
-                                let title = format!("{}   ·   {}", category, section.len());
+                                let title = format!("{}   Â·   {}", category, section.len());
                                 let mut category_header = egui::CollapsingHeader::new(RichText::new(title).size(12.0).color(CYAN).strong())
                                     .id_salt((group, category)).default_open(true);
                                 if !query.is_empty() { category_header = category_header.open(Some(true)); }
@@ -598,7 +615,7 @@ fn category_summary(entries: &[&Entry]) -> String {
         (count > 0).then(|| format!("{count} {}", if count == 1 { singular } else { plural }))
     })
     .collect::<Vec<_>>()
-    .join(" · ")
+    .join(" Â· ")
 }
 // A group's primary runtime is distinct from its package managers and other tools.
 struct VersionPill {

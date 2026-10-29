@@ -8,6 +8,7 @@ mod environment;
 mod environment_icons;
 mod environment_origin;
 mod environment_path;
+mod environment_variables;
 mod gpu;
 mod logs;
 mod logs_access;
