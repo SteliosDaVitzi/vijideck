@@ -1,5 +1,7 @@
+use crate::environment_origin::{Origin, OriginDetector};
 use crate::ui::*;
 use eframe::egui::{self, RichText};
+use eframe::emath::GuiRounding;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -219,6 +221,7 @@ struct Entry {
     path: PathBuf,
     on_path: bool,
     version: String,
+    origin: Origin,
 }
 enum ScanEvent {
     Directory(PathBuf),
@@ -234,6 +237,7 @@ pub struct Environment {
     scanned: bool,
     path_confirmation: Option<(PathBuf, bool)>,
     path_notice: Option<String>,
+    icons: std::collections::HashMap<(&'static str, u32), Option<egui::TextureHandle>>,
 }
 impl Environment {
     pub fn new() -> Self {
@@ -245,6 +249,7 @@ impl Environment {
             scanned: false,
             path_confirmation: None,
             path_notice: None,
+            icons: std::collections::HashMap::new(),
         }
     }
     pub fn scan(&mut self, ctx: &egui::Context) {
@@ -257,6 +262,7 @@ impl Environment {
         self.current_dir = None;
         let ctx = ctx.clone();
         std::thread::spawn(move || {
+            let detector = OriginDetector::new();
             let store = crate::storage::Storage::open_cache();
             if let Some(value) = store
                 .as_ref()
@@ -294,6 +300,7 @@ impl Environment {
                         restored.push(Entry {
                             name: spec.name,
                             version: version(&path, spec.arg),
+                            origin: detector.classify(spec.name, &path),
                             path,
                             on_path,
                         });
@@ -310,7 +317,7 @@ impl Environment {
                     last_update = Instant::now();
                 }
             };
-            let result = collect(&mut progress);
+            let result = collect(&detector, &mut progress);
             let value = serde_json::json!(
                 result
                     .iter()
@@ -408,21 +415,85 @@ impl Environment {
                     let group_matches = group.to_lowercase().contains(&query);
                     let items: Vec<_> = self.entries.iter().filter(|e| group_for(e.name) == group && (group_matches || format!("{} {} {}", e.name, e.version, e.path.display()).to_lowercase().contains(&query))).collect();
                     if items.is_empty() { continue; }
+                    let versions = group_versions(group, &self.entries);
+                    let summary = category_summary(&items);
                     visible += 1;
                     ui.add_space(8.0);
                     egui::Frame::new().fill(SURFACE).corner_radius(4).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
-                        let title = format!("{}   ({} {})", group, items.len(), if items.len() == 1 { "installation" } else { "installations" });
-                        let mut header = egui::CollapsingHeader::new(RichText::new(title).size(15.0).strong()).id_salt(group);
-                        if !query.is_empty() { header = header.open(Some(true)); }
-                        header.show(ui, |ui| {
+                        let pixels = crate::environment_icons::pixel_size(ui.ctx());
+                        let icon = self.icons.entry((group, pixels)).or_insert_with(|| {
+                            crate::environment_icons::load(ui.ctx(), group, pixels).map_err(|error| {
+                                eprintln!("Could not render developer logo for {group}: {error}");
+                            }).ok()
+                        });
+                        let id = ui.make_persistent_id(("environment-group", group));
+                        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+                        if !query.is_empty() { state.set_open(true); }
+                        let mut title_clicked = false;
+                        let mut header = state.show_header(ui, |ui| {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
+                            if matches!(group, "Rust" | "Deno") {
+                                // Preserve upstream monochrome artwork with a light backing.
+                                ui.painter().rect_filled(rect, 5.0, egui::Color32::from_rgb(235, 240, 244));
+                            }
+                            if let Some(icon) = icon {
+                                let scale = ui.ctx().pixels_per_point();
+                                let size = icon.size_vec2() / scale;
+                                let min = (rect.center() - size / 2.0).round_to_pixels(scale);
+                                ui.painter().image(icon.id(), egui::Rect::from_min_size(min, size), egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                            } else {
+                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(16.0), CYAN);
+                            }
+                            ui.add_space(5.0);
+                            ui.vertical(|ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    let response = ui.add(egui::Label::new(RichText::new(group).size(15.0).strong()).sense(egui::Sense::click()));
+                                    ui.label(RichText::new(&summary).size(12.0).color(MUTED));
+                                    title_clicked = response.clicked();
+                                });
+                                if !versions.is_empty() {
+                                    ui.add_space(2.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        for version in &versions {
+                                            let color = match version.origin {
+                                                "Bundled" => AMBER,
+                                                "Unknown origin" => MUTED,
+                                                _ => CYAN,
+                                            };
+                                            egui::Frame::new()
+                                                .fill(color.gamma_multiply(0.09))
+                                                .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.25)))
+                                                .corner_radius(8)
+                                                .inner_margin(egui::Margin::symmetric(5, 1))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(&version.number).monospace().size(10.0).color(color));
+                                                }).response.on_hover_text(version.tooltip());
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                        if title_clicked { header.toggle(); }
+                        header.body(|ui| {
                             ui.add_space(8.0);
                             for category in ["Languages & runtimes", "Package managers", "Other tools"] {
                                 let section: Vec<_> = items.iter().copied().filter(|e| category_for(e.name) == category).collect();
                                 if section.is_empty() { continue; }
+                                ui.add_space(6.0);
+                                egui::Frame::new().fill(PANEL).corner_radius(5).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                let title = format!("{}   ·   {}", category, section.len());
+                                let mut category_header = egui::CollapsingHeader::new(RichText::new(title).size(12.0).color(CYAN).strong())
+                                    .id_salt((group, category)).default_open(true);
+                                if !query.is_empty() { category_header = category_header.open(Some(true)); }
+                                category_header.show(ui, |ui| {
+                                for origin in ["Standalone", "Managed", "Bundled", "Unknown origin"] {
+                                let origin_entries: Vec<_> = section.iter().copied().filter(|e| e.origin.label() == origin).collect();
+                                if origin_entries.is_empty() { continue; }
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(category).size(12.0).color(CYAN).strong());
-                                for aliases in group_aliases(&section) {
+                                ui.label(RichText::new(origin).size(11.0).strong().color(if origin == "Bundled" { AMBER } else { MUTED }));
+                                for aliases in group_aliases(&origin_entries) {
                                     let e = aliases[0];
                                     ui.add_space(6.0);
                                     ui.horizontal_wrapped(|ui| {
@@ -432,6 +503,7 @@ impl Environment {
                                     for e in aliases {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(if e.on_path { "On PATH" } else { "Not on PATH" }).size(11.0).color(if e.on_path { CYAN } else { AMBER }));
+                                        ui.label(RichText::new(e.origin.label()).size(11.0).color(MUTED)).on_hover_text(e.origin.description());
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.push_id(&e.path, |ui| {
                                                 let (menu_rect, menu_response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
@@ -470,6 +542,9 @@ impl Environment {
                                     ui.add_space(6.0);
                                     rule(ui);
                                 }
+                                }
+                                });
+                                });
                             }
                         });
                     });
@@ -507,6 +582,87 @@ impl Environment {
                 });
         }
     }
+}
+fn category_summary(entries: &[&Entry]) -> String {
+    [
+        ("Languages & runtimes", "runtime", "runtimes"),
+        ("Package managers", "package manager", "package managers"),
+        ("Other tools", "other tool", "other tools"),
+    ]
+    .into_iter()
+    .filter_map(|(category, singular, plural)| {
+        let count = entries
+            .iter()
+            .filter(|entry| category_for(entry.name) == category)
+            .count();
+        (count > 0).then(|| format!("{count} {}", if count == 1 { singular } else { plural }))
+    })
+    .collect::<Vec<_>>()
+    .join(" · ")
+}
+// A group's primary runtime is distinct from its package managers and other tools.
+struct VersionPill {
+    number: String,
+    origin: &'static str,
+    evidence: Vec<String>,
+}
+impl VersionPill {
+    fn tooltip(&self) -> String {
+        format!("{}\n{}", self.origin, self.evidence.join("\n"))
+    }
+}
+
+fn group_versions(group: &str, entries: &[Entry]) -> Vec<VersionPill> {
+    let mut versions: Vec<VersionPill> = Vec::new();
+    for entry in entries {
+        let primary = match group {
+            "Python" => matches!(entry.name, "Python" | "Python 3"),
+            "Node.js" | ".NET" | "Java" | "Rust" | "Go" | "Ruby" | "PHP" | "Deno" | "Bun"
+            | "Git" => entry.name == group,
+            _ => false,
+        };
+        if primary && let Some(version) = version_number(&entry.version) {
+            let origin = entry.origin.label();
+            let evidence = entry.origin.description();
+            if let Some(existing) = versions
+                .iter_mut()
+                .find(|existing| existing.number == version && existing.origin == origin)
+            {
+                if !existing.evidence.contains(&evidence) {
+                    existing.evidence.push(evidence);
+                }
+            } else {
+                versions.push(VersionPill {
+                    number: version.to_owned(),
+                    origin,
+                    evidence: vec![evidence],
+                });
+            }
+        }
+    }
+    versions.sort_by(|a, b| (&a.number, a.origin).cmp(&(&b.number, b.origin)));
+    versions
+}
+
+fn version_number(output: &str) -> Option<&str> {
+    output.split_whitespace().find_map(|word| {
+        let word = word.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | ',' | ';'));
+        let word = word
+            .strip_prefix("go")
+            .or_else(|| word.strip_prefix('v'))
+            .unwrap_or(word);
+        let mut parts = word.split('.');
+        let first = parts.next()?;
+        let second = parts.next()?;
+        if !first.is_empty()
+            && first.bytes().all(|c| c.is_ascii_digit())
+            && second.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        {
+            Some(word)
+        } else {
+            None
+        }
+    })
 }
 // Group only known aliases with the same reported installation and directory.
 // Distinct directories or version output remain separate installations.
@@ -595,7 +751,7 @@ fn candidates(dir: &Path, exe: &str) -> Vec<PathBuf> {
         if p.is_file() { vec![p] } else { vec![] }
     }
 }
-fn collect(progress: &mut impl FnMut(&Path)) -> Vec<Entry> {
+fn collect(detector: &OriginDetector, progress: &mut impl FnMut(&Path)) -> Vec<Entry> {
     let paths: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|v| {
             std::env::split_paths(&v)
@@ -683,6 +839,7 @@ fn collect(progress: &mut impl FnMut(&Path)) -> Vec<Entry> {
                         result.push(Entry {
                             name: spec.name,
                             version: version(&path, spec.arg),
+                            origin: detector.classify(spec.name, &path),
                             path,
                             on_path,
                         });
@@ -697,6 +854,7 @@ fn collect(progress: &mut impl FnMut(&Path)) -> Vec<Entry> {
                 result.push(Entry {
                     name: spec.name,
                     version: version(path, spec.arg),
+                    origin: detector.classify(spec.name, path),
                     path: path.clone(),
                     on_path: false,
                 });
@@ -860,12 +1018,67 @@ fn version(path: &Path, args: &str) -> String {
 mod discovery_tests {
     use super::*;
     #[test]
+    fn group_versions_deduplicates_runtime_versions_and_excludes_other_tools() {
+        let entry = |name, version: &str| Entry {
+            name,
+            path: PathBuf::from(name),
+            on_path: true,
+            version: version.into(),
+            origin: Origin::Unknown,
+        };
+        let entries = vec![
+            entry("Python", "Python 3.12.3"),
+            entry("Python 3", "Python 3.12.3"),
+            entry("Python", "Python 3.13.1"),
+            entry("Python", "Version unavailable (script wrapper)"),
+            entry("pip", "pip 25.1 from site-packages (python 3.12)"),
+            entry("Node.js", "v22.14.0"),
+            entry("npm", "10.9.2"),
+            entry("Java", "openjdk version \"21.0.4\" 2024-07-16"),
+            entry("Java compiler", "javac 17.0.1"),
+            entry("Go", "go version go1.23.3 windows/amd64"),
+        ];
+        let numbers = |group| {
+            group_versions(group, &entries)
+                .into_iter()
+                .map(|pill| pill.number)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(numbers("Python"), ["3.12.3", "3.13.1"]);
+        assert_eq!(numbers("Node.js"), ["22.14.0"]);
+        assert_eq!(numbers("Java"), ["21.0.4"]);
+        assert_eq!(numbers("Go"), ["1.23.3"]);
+        assert!(group_versions("Other tools", &entries).is_empty());
+        assert_eq!(version_number("Version unavailable (timed out)"), None);
+    }
+    #[test]
+    fn identical_versions_keep_distinct_origin_pills() {
+        let entry = |origin| Entry {
+            name: "Python",
+            path: PathBuf::from("python"),
+            on_path: false,
+            version: "Python 3.12.3".into(),
+            origin,
+        };
+        let entries = vec![
+            entry(Origin::Bundled("Blender".into())),
+            entry(Origin::Unknown),
+            entry(Origin::Bundled("Editor".into())),
+        ];
+        let pills = group_versions("Python", &entries);
+        assert_eq!(pills.len(), 2);
+        let bundled = pills.iter().find(|pill| pill.origin == "Bundled").unwrap();
+        assert!(bundled.tooltip().contains("Blender"));
+        assert!(bundled.tooltip().contains("Editor"));
+    }
+    #[test]
     fn groups_pip_aliases_only_for_same_verified_installation() {
         let entry = |name, path: &str, version: &str| Entry {
             name,
             path: PathBuf::from(path),
             on_path: true,
             version: version.into(),
+            origin: Origin::Unknown,
         };
         let pip = entry(
             "pip",

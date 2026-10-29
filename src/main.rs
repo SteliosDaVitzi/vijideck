@@ -5,6 +5,8 @@ mod background;
 mod cleanup;
 mod cleanup_ui;
 mod environment;
+mod environment_icons;
+mod environment_origin;
 mod environment_path;
 mod gpu;
 mod logs;
