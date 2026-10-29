@@ -156,6 +156,48 @@ fn note(scan: &mut Scan, path: &Path, error: impl std::fmt::Display) {
     }
 }
 
+/// Rebuild a cached candidate from current filesystem state before showing it.
+pub fn validate_cached(root: &Path, path: &Path, cancel: &AtomicBool) -> Option<Candidate> {
+    validate_path(root, path).ok()?;
+    let meta = fs::symlink_metadata(path).ok()?;
+    if !meta.is_dir() || linked(&meta) {
+        return None;
+    }
+    let parent = path.parent()?;
+    let names: HashSet<String> = fs::read_dir(parent)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let (source, kind) = classify(path, &names)?;
+    let mounts = sysinfo::Disks::new_with_refreshed_list()
+        .list()
+        .iter()
+        .filter_map(|d| d.mount_point().canonicalize().ok())
+        .filter(|p| p != root)
+        .collect();
+    let manifest = inventory(path, &mounts, cancel, &mut |_, _, _| {}).ok()?;
+    let bytes = manifest.values().map(|s| s.len).sum();
+    let files = manifest.values().filter(|s| !s.directory).count();
+    let modified = manifest
+        .values()
+        .filter_map(|s| s.modified)
+        .max()
+        .or_else(|| meta.modified().ok());
+    Some(Candidate {
+        path: path.to_owned(),
+        source,
+        kind,
+        bytes,
+        files,
+        modified,
+        created: meta.created().ok(),
+        issue: None,
+        search: format!("{} {source} {kind}", path.display()).to_lowercase(),
+        manifest: Arc::new(manifest),
+    })
+}
+
 /// A bounded pool overlaps independent directory reads. Rotational disks use one
 /// worker to avoid seek storms; SSD/unknown storage uses at most eight workers.
 pub fn scan(root: &Path, cancel: &AtomicBool, update: impl FnMut(ScanUpdate) + Send) -> Scan {
@@ -675,6 +717,24 @@ mod tests {
         assert_eq!(result.entries.iter().map(|e| e.bytes).sum::<u64>(), 12);
         assert!(result.entries.iter().all(|e| e.issue.is_none()));
     }
+    #[test]
+    fn cached_candidates_are_remeasured_and_missing_or_unclassified_paths_rejected() {
+        let fixture = Fixture::new();
+        let root = fixture.0.canonicalize().unwrap();
+        let project = root.join("cached");
+        std::fs::create_dir_all(project.join("node_modules")).unwrap();
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        std::fs::write(project.join("node_modules/file"), "hello").unwrap();
+        let path = project.join("node_modules");
+        let cancel = AtomicBool::new(false);
+        let candidate = validate_cached(&root, &path, &cancel).unwrap();
+        assert_eq!(candidate.bytes, 5);
+        std::fs::write(path.join("file"), "updated").unwrap();
+        assert_eq!(validate_cached(&root, &path, &cancel).unwrap().bytes, 7);
+        std::fs::remove_file(project.join("package.json")).unwrap();
+        assert!(validate_cached(&root, &path, &cancel).is_none());
+    }
+
     #[test]
     fn deletes_only_selected_and_rejects_changed_contents_and_wrong_root() {
         let f = Fixture::new();

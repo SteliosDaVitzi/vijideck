@@ -112,6 +112,19 @@ impl Cleanup {
             needs_rescan: false,
         }
     }
+    pub fn restore_and_sync(&mut self, ctx: &egui::Context) {
+        let root = crate::storage::Storage::open()
+            .ok()
+            .and_then(|s| s.load_cache("cleanup").ok().flatten())
+            .and_then(|v| serde_json::from_value::<PathBuf>(v.get("root")?.clone()).ok());
+        if let Some(root) = root
+            && self.disks.iter().any(|d| d.path == root)
+        {
+            self.selected_disk = Some(root);
+            self.start_scan(ctx);
+        }
+    }
+
     pub fn start_scan(&mut self, ctx: &egui::Context) {
         if !self.can_scan() {
             return;
@@ -141,10 +154,51 @@ impl Cleanup {
         if let Err(e) = std::thread::Builder::new()
             .name("cleanup-scan".into())
             .spawn(move || {
+                let store = crate::storage::Storage::open_cache();
+                if let Some(value) = store
+                    .as_ref()
+                    .and_then(|s| s.load_cache("cleanup").ok().flatten())
+                {
+                    let cached_root = value
+                        .get("root")
+                        .and_then(|v| serde_json::from_value::<PathBuf>(v.clone()).ok());
+                    if cached_root.as_ref() == Some(&root) {
+                        let paths = value
+                            .get("paths")
+                            .and_then(|v| serde_json::from_value::<Vec<PathBuf>>(v.clone()).ok())
+                            .unwrap_or_default();
+                        for path in paths {
+                            if cancel.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if let Some(candidate) = cleanup::validate_cached(&root, &path, &cancel)
+                            {
+                                tx.send(Event::Update(ScanUpdate::Found(candidate))).ok();
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
+                }
                 let scan = cleanup::scan(&root, &cancel, |update| {
                     tx.send(Event::Update(update)).ok();
                     ctx.request_repaint();
                 });
+                if !scan.cancelled && scan.visited > 0 {
+                    let paths: Vec<_> = scan
+                        .entries
+                        .iter()
+                        .filter(|e| e.issue.is_none())
+                        .map(|e| &e.path)
+                        .collect();
+                    let entries: Vec<_> = scan.entries.iter().filter(|e| e.issue.is_none()).map(|e| serde_json::json!({"path": e.path, "source": e.source, "kind": e.kind, "bytes": e.bytes, "files": e.files})).collect();
+                    if let (Some(store), Ok(value)) = (
+                        store,
+                        serde_json::to_value(serde_json::json!({"root": root, "paths": paths, "entries": entries})),
+                    ) && let Err(error) = store.save_cache("cleanup", &value)
+                    {
+                        eprintln!("Could not save cleanup cache: {error}");
+                    }
+                }
                 tx.send(Event::Scanned(scan)).ok();
                 ctx.request_repaint();
             })
@@ -203,7 +257,13 @@ impl Cleanup {
                 Event::Update(ScanUpdate::Progress(progress)) => self.progress = progress,
                 Event::Update(ScanUpdate::Found(candidate)) => {
                     if let Some(s) = &mut self.scan {
-                        s.entries.push(candidate);
+                        if let Some(existing) =
+                            s.entries.iter_mut().find(|e| e.path == candidate.path)
+                        {
+                            *existing = candidate;
+                        } else {
+                            s.entries.push(candidate);
+                        }
                         self.dirty = true;
                     }
                 }
@@ -240,7 +300,7 @@ impl Cleanup {
         if self.deleting {
             "Deleting selected folders"
         } else if self.busy {
-            "Scanning / results update live"
+            "Syncing cleanup results"
         } else {
             "Cleanup / review before deleting"
         }
@@ -478,7 +538,7 @@ impl Cleanup {
         } else if cancelling {
             ("Stopping", AMBER)
         } else if self.busy {
-            ("Scanning", CYAN)
+            ("Syncing", CYAN)
         } else if failed {
             ("Scan failed", RED)
         } else if self.needs_rescan {

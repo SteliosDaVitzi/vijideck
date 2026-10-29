@@ -222,6 +222,7 @@ struct Entry {
 }
 enum ScanEvent {
     Directory(PathBuf),
+    Restored(Vec<Entry>),
     Finished(Vec<Entry>),
 }
 
@@ -246,15 +247,61 @@ impl Environment {
             path_notice: None,
         }
     }
-    fn scan(&mut self, ctx: &egui::Context) {
+    pub fn scan(&mut self, ctx: &egui::Context) {
         if self.rx.is_some() {
             return;
         }
+        self.scanned = true;
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         self.current_dir = None;
         let ctx = ctx.clone();
         std::thread::spawn(move || {
+            let store = crate::storage::Storage::open_cache();
+            if let Some(value) = store
+                .as_ref()
+                .and_then(|s| s.load_cache("environment").ok().flatten())
+            {
+                let mut restored = Vec::new();
+                let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+                    .map(|v| std::env::split_paths(&v).collect())
+                    .unwrap_or_default();
+                if let Some(items) = value.as_array() {
+                    for item in items {
+                        let Some(spec) = item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .and_then(|name| TOOLS.iter().find(|s| s.name == name))
+                        else {
+                            continue;
+                        };
+                        let Some(path) = item
+                            .get("path")
+                            .and_then(|v| serde_json::from_value::<PathBuf>(v.clone()).ok())
+                        else {
+                            continue;
+                        };
+                        let Some(parent) = path.parent() else {
+                            continue;
+                        };
+                        if !candidates(parent, spec.exe).contains(&path) {
+                            continue;
+                        }
+                        let on_path = path_dirs.iter().any(|dir| {
+                            std::fs::canonicalize(dir).ok() == std::fs::canonicalize(parent).ok()
+                                && dir.is_dir()
+                        });
+                        restored.push(Entry {
+                            name: spec.name,
+                            version: version(&path, spec.arg),
+                            path,
+                            on_path,
+                        });
+                    }
+                }
+                let _ = tx.send(ScanEvent::Restored(restored));
+                ctx.request_repaint();
+            }
             let mut last_update = Instant::now() - Duration::from_millis(100);
             let mut progress = |path: &Path| {
                 if last_update.elapsed() >= Duration::from_millis(100) {
@@ -264,13 +311,24 @@ impl Environment {
                 }
             };
             let result = collect(&mut progress);
+            let value = serde_json::json!(
+                result
+                    .iter()
+                    .map(|entry| serde_json::json!({"name": entry.name, "path": entry.path, "version": entry.version, "on_path": entry.on_path}))
+                    .collect::<Vec<_>>()
+            );
+            if let Some(store) = store
+                && let Err(error) = store.save_cache("environment", &value)
+            {
+                eprintln!("Could not save environment cache: {error}");
+            }
             let _ = tx.send(ScanEvent::Finished(result));
             ctx.request_repaint();
         });
     }
     pub fn status(&self) -> &'static str {
         if self.rx.is_some() {
-            "Scanning developer environment"
+            "Syncing developer environment"
         } else {
             "Developer environment"
         }
@@ -289,6 +347,7 @@ impl Environment {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     ScanEvent::Directory(path) => self.current_dir = Some(path),
+                    ScanEvent::Restored(entries) => self.entries = entries,
                     ScanEvent::Finished(entries) => {
                         self.entries = entries;
                         finished = true;
@@ -334,7 +393,7 @@ impl Environment {
             rule(ui);
             if self.rx.is_some() {
                 ui.add_space(12.0);
-                ui.horizontal(|ui| { ui.spinner(); ui.label("Scanning installed tools..."); });
+                ui.horizontal(|ui| { ui.spinner(); ui.label("Syncing installed tools..."); });
                 if let Some(path) = &self.current_dir {
                     ui.add(egui::Label::new(RichText::new(path.to_string_lossy()).monospace().size(11.0).color(MUTED)).wrap().selectable(true));
                 }

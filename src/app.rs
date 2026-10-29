@@ -20,6 +20,8 @@ enum Event {
 
 pub struct VijiDeck {
     background: crate::background::Background,
+    storage: Option<crate::storage::Storage>,
+    saved_preferences: crate::storage::Preferences,
     active_tool: usize,
     logs_only: bool,
     processes: crate::processes::Processes,
@@ -74,7 +76,31 @@ impl VijiDeck {
             })
             .expect("start port worker");
         tx.send(Command::Scan).ok();
+        let mut storage = if cfg!(feature = "ui-preview")
+            && std::env::var_os("VIJIDECK_SCREENSHOT_TO").is_some()
+        {
+            None
+        } else {
+            match crate::storage::Storage::open() {
+                Ok(store) => Some(store),
+                Err(error) => {
+                    eprintln!("Could not open preferences: {error}");
+                    None
+                }
+            }
+        };
+        let preferences = match storage.as_ref().map(|store| store.load_preferences()) {
+            Some(Ok(prefs)) => prefs,
+            Some(Err(error)) => {
+                eprintln!("Could not load preferences: {error}");
+                storage = None;
+                Default::default()
+            }
+            None => Default::default(),
+        };
         let mut app = Self {
+            storage,
+            saved_preferences: preferences,
             background: crate::background::Background::new(cc),
             active_tool: 2,
             logs_only: false,
@@ -88,16 +114,16 @@ impl VijiDeck {
             snapshot,
             selected,
             query: String::new(),
-            protocol: 0,
-            listeners_only: true,
-            auto: true,
+            protocol: preferences.protocol,
+            listeners_only: preferences.listeners_only,
+            auto: preferences.auto_refresh,
             busy: true,
             last_scan: Instant::now(),
             scanned,
             notice: None,
             confirmation: None,
-            descending: false,
-            sort: 0,
+            descending: preferences.descending,
+            sort: preferences.sort,
             inspector_tab: 0,
             #[cfg(feature = "ui-preview")]
             preview_started: Instant::now(),
@@ -114,6 +140,14 @@ impl VijiDeck {
             app.active_tool = 3;
             app.logs_only = true;
             app.logs.configure_startup(request);
+        }
+        if !app.logs_only
+            && app.storage.is_some()
+            && !(cfg!(feature = "ui-preview")
+                && std::env::var_os("VIJIDECK_SCREENSHOT_TO").is_some())
+        {
+            app.cleanup.restore_and_sync(&cc.egui_ctx);
+            app.environment.scan(&cc.egui_ctx);
         }
         app
     }
@@ -160,6 +194,30 @@ impl VijiDeck {
             ) && self.active_tool == 2
             {
                 self.active_tool = 0;
+            }
+        }
+    }
+
+    fn persist_preferences(&mut self) {
+        if self.logs_only {
+            return;
+        }
+        let prefs = crate::storage::Preferences {
+            auto_refresh: self.auto,
+            listeners_only: self.listeners_only,
+            protocol: self.protocol,
+            sort: self.sort,
+            descending: self.descending,
+        };
+        if prefs != self.saved_preferences
+            && let Some(store) = &mut self.storage
+        {
+            match store.save_preferences(prefs) {
+                Ok(()) => self.saved_preferences = prefs,
+                Err(error) => {
+                    eprintln!("Could not save preferences: {error}");
+                    self.storage = None;
+                }
             }
         }
     }
@@ -1088,7 +1146,12 @@ impl eframe::App for VijiDeck {
         egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 
+    fn on_exit(&mut self, _: Option<&eframe::glow::Context>) {
+        self.persist_preferences();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.persist_preferences();
         // Screenshot previews must be allowed to exit without becoming a widget.
         #[cfg(feature = "ui-preview")]
         if self.preview_requested && ctx.input(|i| i.viewport().close_requested()) {

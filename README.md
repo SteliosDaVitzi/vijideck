@@ -144,3 +144,9 @@ Choose **Logs** in the tool rail to open recent operating system events.
 - Reads run in a background worker with a 30-second timeout and 32 MiB output limit; an explicitly approved access request allows up to 120 seconds for authentication. If a busy macOS log exceeds the output limit, choose a shorter time range. The app never modifies logs. macOS private values may be redacted. Empty results can reflect restricted visibility.
 
 Native macOS and Linux runtime verification requires those operating systems; the Windows reader and platform record parsers can be tested locally with `cargo test`. To explicitly query real host logs, run `cargo test logs::tests::reads_host_logs -- --ignored --nocapture`.
+
+## Local preferences
+
+VijiDeck stores port-manager auto-refresh, listening-only filter, protocol, and sorting preferences in a local SQLite database. On Windows it is located at `%LOCALAPPDATA%\VijiDeck\vijideck.sqlite3`; on macOS at `~/Library/Application Support/VijiDeck/vijideck.sqlite3`; and on Linux at `$XDG_DATA_HOME/vijideck/vijideck.sqlite3` (or `~/.local/share/vijideck/vijideck.sqlite3`). The database is created on first launch. If it cannot be opened, the app uses defaults for that session. Screenshot previews do not use the database.
+
+Developer tool locations and the most recently completed cleanup disk scan are cached in SQLite. On startup, cached tool paths are checked and versions refreshed; cached cleanup folders are reclassified and remeasured before they appear. A background sync then searches for new results, with a syncing indicator in each view. The first cleanup scan still requires choosing a disk; subsequent launches rescan that disk automatically. Cancelled cleanup scans do not replace the last completed cache. Cleanup selections remain disabled during scanning, and deletion still performs its own fresh validation.

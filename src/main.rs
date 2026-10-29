@@ -14,6 +14,7 @@ mod logs_ui;
 mod overview;
 mod ports;
 mod processes;
+mod storage;
 mod ui;
 
 fn main() -> eframe::Result {
