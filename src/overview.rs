@@ -210,6 +210,9 @@ impl Overview {
                     .inner_margin(egui::Margin::same(10)),
             )
             .show(ctx, |ui| {
+                // The global 8px item spacing makes the content taller than the
+                // fixed 160px window, which clips the frame's bottom outline.
+                ui.spacing_mut().item_spacing.y = 4.0;
                 let drag_area = ui.interact(
                     ui.max_rect(),
                     ui.id().with("widget_drag_area"),
@@ -234,7 +237,7 @@ impl Overview {
                         }
                     });
                 });
-                ui.add_space(5.0);
+                ui.add_space(2.0);
                 let values = self
                     .sample
                     .as_ref()
@@ -878,7 +881,7 @@ Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
 
 #[cfg(not(windows))]
 fn hardware_inventory() -> Hardware {
-    Hardware { memory_summary: None, gpu_card: None, sections: vec![("Architecture".into(), System::cpu_arch()), ("Kernel".into(), System::kernel_version().unwrap_or_else(|| "Unavailable".into()))], note: Some("Extended graphics, motherboard, firmware, and memory module inventory is currently available on Windows. Processor, memory, mounted storage, network, and supported temperature sensors are shown above.".into()) }
+    Hardware { memory_summary: None, gpu_card: crate::gpu::card(), sections: vec![("Architecture".into(), System::cpu_arch()), ("Kernel".into(), System::kernel_version().unwrap_or_else(|| "Unavailable".into()))], note: Some("Extended graphics, motherboard, firmware, and memory module inventory is currently available on Windows. Processor, memory, mounted storage, network, and supported temperature sensors are shown above.".into()) }
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 use eframe::egui;
 
+const WIDGET_SIZE: egui::Vec2 = egui::vec2(300.0, 160.0);
+
 #[derive(Clone, Copy)]
 pub enum Action {
     Open,
@@ -13,9 +15,11 @@ pub struct Background {
     pub compact: bool,
     pub widget_visible: bool,
     pub quitting: bool,
-    main_rect: Option<egui::Rect>,
+    main_size: Option<egui::Vec2>,
     main_maximized: bool,
     widget_position: Option<egui::Pos2>,
+    #[cfg(target_os = "linux")]
+    resize_target: Option<(egui::Vec2, std::time::Instant)>,
     #[cfg(windows)]
     tray: Option<tray_icon::TrayIcon>,
     #[cfg(windows)]
@@ -115,9 +119,11 @@ impl Background {
             compact: false,
             widget_visible: false,
             quitting: false,
-            main_rect: None,
+            main_size: None,
             main_maximized: false,
             widget_position: None,
+            #[cfg(target_os = "linux")]
+            resize_target: None,
             #[cfg(windows)]
             tray,
             #[cfg(windows)]
@@ -176,6 +182,39 @@ impl Background {
     #[cfg(not(windows))]
     pub fn sync_window_shape(&mut self) {}
 
+    /// Re-applies the requested size while the compositor settles after a mode switch.
+    ///
+    /// On Wayland, toggling decorations makes KWin (and other server-side-decoration
+    /// compositors) send an asynchronous configure carrying the previous window size,
+    /// which winit adopts and which overrides the earlier `InnerSize` request.
+    pub fn sync_window_size(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "linux")]
+        if let Some((size, until)) = self.resize_target {
+            if std::time::Instant::now() > until {
+                self.resize_target = None;
+            } else {
+                let current = ctx.input(|i| i.content_rect().size());
+                if (current - size).abs().max_elem() > 0.5 {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                }
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = ctx;
+    }
+
+    fn request_size(&mut self, ctx: &egui::Context, size: egui::Vec2) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        #[cfg(target_os = "linux")]
+        {
+            self.resize_target = Some((
+                size,
+                std::time::Instant::now() + std::time::Duration::from_secs(2),
+            ));
+        }
+    }
+
     pub fn can_hide(&self) -> bool {
         #[cfg(windows)]
         {
@@ -207,25 +246,35 @@ impl Background {
                     ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
                         egui::WindowLevel::Normal,
                     ));
-                    if let Some(rect) = self.main_rect {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(rect.min));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(rect.size()));
+                    #[cfg(target_os = "linux")]
+                    {
+                        self.resize_target = None;
                     }
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(self.main_maximized));
+                    let size = self
+                        .main_size
+                        .unwrap_or(egui::vec2(1320.0, 820.0))
+                        .max(egui::vec2(900.0, 580.0));
+                    // Always reopen centered on the screen, independent of where
+                    // the widget was sitting.
+                    if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
+                        let position = ((monitor - size) * 0.5).max(egui::Vec2::ZERO);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                            position.to_pos2().round(),
+                        ));
+                    }
+                    if self.main_maximized {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                    } else {
+                        self.request_size(ctx, size);
+                    }
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             Action::Widget => {
                 if !self.compact {
-                    self.main_rect = ctx.input(|i| {
-                        let viewport = i.viewport();
-                        viewport.inner_rect.map(|inner| {
-                            egui::Rect::from_min_size(
-                                viewport.outer_rect.map_or(inner.min, |outer| outer.min),
-                                inner.size(),
-                            )
-                        })
-                    });
+                    // Wayland reports neither position nor inner_rect, so take the
+                    // size from the content rect, which every backend provides.
+                    self.main_size = Some(ctx.input(|i| i.content_rect().size()));
                     self.main_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                 }
                 self.compact = true;
@@ -235,7 +284,7 @@ impl Background {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(1.0, 1.0)));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(300.0, 160.0)));
+                self.request_size(ctx, WIDGET_SIZE);
                 // X11 resize requests are asynchronous: disabling resizing here can
                 // pin the window to its old, full-size dimensions. The widget has
                 // no decorations, so leave resizing enabled on Linux.

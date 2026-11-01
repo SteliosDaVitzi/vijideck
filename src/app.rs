@@ -1159,6 +1159,7 @@ impl eframe::App for VijiDeck {
         }
         self.background.poll(ctx);
         self.background.sync_window_shape();
+        self.background.sync_window_size(ctx);
         self.cleanup.poll();
         self.overview.poll();
         while let Ok(event) = self.rx.try_recv() {
