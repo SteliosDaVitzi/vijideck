@@ -54,6 +54,9 @@ jobs:
           sudo apt-get install -y ./dist/*/*.deb
           test -x /usr/bin/vijideck
           desktop-file-validate /usr/share/applications/vijideck.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/vijideck.png
+          test -f /usr/share/doc/vijideck/copyright
+          dpkg -L vijideck | xargs -d '\n' stat -c '%a %n' | awk '$1 !~ /^(755|644)$/ { print "Bad mode: " $0; bad=1 } END { exit bad }'
           sudo apt-get remove -y vijideck
       - uses: actions/upload-artifact@v4
         with:

@@ -86,16 +86,23 @@ pub fn dot(ui: &mut egui::Ui, color: Color32) {
 }
 
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(color.gamma_multiply(0.08))
-        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.25)))
-        .corner_radius(3)
-        .inner_margin(egui::Margin::symmetric(6, 3))
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(RichText::new(text).monospace().size(10.0).color(color)).extend(),
-            );
-        });
+    // Measure first and allocate the whole badge as one rect, so a wrapping
+    // parent layout (`horizontal_wrapped`) can move it to the next line.
+    let galley = egui::WidgetText::from(RichText::new(text).monospace().size(10.0).color(color))
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Monospace);
+    let margin = Vec2::new(6.0, 3.0);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + 2.0 * margin, egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        painter.rect(
+            rect,
+            3,
+            color.gamma_multiply(0.08),
+            Stroke::new(1.0_f32, color.gamma_multiply(0.25)),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(rect.min + margin, galley, color);
+    }
 }
 
 pub fn field(ui: &mut egui::Ui, label: &str, value: &str) {

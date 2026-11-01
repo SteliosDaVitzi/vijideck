@@ -176,6 +176,27 @@ fn macos(
     Ok(())
 }
 
+fn copy_dir(from: &Path, to: &Path) -> Result {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Debian policy modes regardless of the local umask: 755 for directories and
+/// executables, 644 for everything else.
+fn normalize_modes(dir: &Path) -> Result {
+    run(Command::new("chmod").args(["-R", "u=rwX,go=rX"]).arg(dir))?;
+    Ok(())
+}
+
 fn linux(
     binary: &Path,
     out: &Path,
@@ -184,22 +205,33 @@ fn linux(
     root: &Path,
     stage: &Path,
 ) -> Result {
-    let package = stage.join("package");
+    let deb_arch = match arch {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => return Err("Unsupported architecture".into()),
+    };
+    let icons = root.join("packaging/linux/icons");
+    let package = stage.join("debian").join(NAME);
     let installed = package.join("usr/bin").join(NAME);
     fs::create_dir_all(installed.parent().ok_or("Missing parent")?)?;
     fs::copy(binary, &installed)?;
     run(Command::new("chmod").arg("755").arg(&installed))?;
-    let icon = package.join(format!("usr/share/icons/hicolor/1024x1024/apps/{NAME}.png"));
-    fs::create_dir_all(icon.parent().ok_or("Missing icon parent")?)?;
-    fs::copy(root.join("Glossy Donut Chart in Blue Tray.png"), &icon)?;
+    copy_dir(&icons, &package.join("usr/share/icons"))?;
     let desktop = package.join(format!("usr/share/applications/{NAME}.desktop"));
     write(
         &desktop,
         format!(
-            "[Desktop Entry]\nType=Application\nName={TITLE}\nComment=System overview, ports and disk cleanup\nExec={NAME}\nIcon={NAME}\nTerminal=false\nCategories=System;Utility;\n"
+            "[Desktop Entry]\nType=Application\nName={TITLE}\nComment=System overview, ports and disk cleanup\nExec={NAME}\nIcon={NAME}\nTerminal=false\nCategories=System;Utility;\nStartupWMClass={NAME}\n"
         ),
     )?;
     run(Command::new("desktop-file-validate").arg(&desktop))?;
+    write(
+        &package.join(format!("usr/share/doc/{NAME}/copyright")),
+        format!(
+            "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: {TITLE}\n\nFiles: *\nCopyright: VijiDeck contributors\nLicense: MIT\n"
+        ),
+    )?;
+    normalize_modes(&package)?;
     write(
         &stage.join("debian/control"),
         format!(
@@ -208,43 +240,41 @@ fn linux(
     )?;
     let deps = run(Command::new("dpkg-shlibdeps")
         .arg("-O")
-        .arg(format!("-e{}", binary.display()))
+        .arg(format!("-edebian/{NAME}/usr/bin/{NAME}"))
         .current_dir(stage))?;
     let deps = deps
         .lines()
         .find_map(|line| line.strip_prefix("shlibs:Depends="))
         .ok_or("Missing Debian dependencies")?;
-    let deb_arch = match arch {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => return Err("Unsupported architecture".into()),
-    };
+    let installed_size = run(Command::new("du")
+        .args(["-sk", "--apparent-size"])
+        .arg(&package))?;
+    let installed_size = installed_size
+        .split_whitespace()
+        .next()
+        .ok_or("Missing installed size")?;
     write(
         &package.join("DEBIAN/control"),
         format!(
-            "Package: {NAME}\nVersion: {version}\nArchitecture: {deb_arch}\nMaintainer: VijiDeck contributors <noreply@example.invalid>\nSection: utils\nPriority: optional\nDepends: {deps}, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1, libwayland-client0, libxkbcommon0\nDescription: {TITLE}\n Native system overview, port management and disk cleanup.\n"
+            "Package: {NAME}\nVersion: {version}\nArchitecture: {deb_arch}\nMaintainer: VijiDeck contributors <noreply@example.invalid>\nInstalled-Size: {installed_size}\nSection: utils\nPriority: optional\nDepends: {deps}, libx11-6, libxcursor1, libxi6, libxrandr2, libgl1, libwayland-client0, libxkbcommon0\nDescription: {TITLE}\n Native system overview, port management and disk cleanup.\n"
         ),
     )?;
+    normalize_modes(&package.join("DEBIAN"))?;
     run(Command::new("dpkg-deb")
-        .args(["--root-owner-group", "--build"])
+        .args(["--root-owner-group", "-Zxz", "--build"])
         .arg(&package)
+        .arg(out.join(format!("{NAME}-{version}-linux-{arch}.deb"))))?;
+    run(Command::new("dpkg-deb")
+        .arg("--info")
         .arg(out.join(format!("{NAME}-{version}-linux-{arch}.deb"))))?;
     let portable = stage.join(format!("{NAME}-{version}"));
     fs::create_dir(&portable)?;
     fs::copy(binary, portable.join(NAME))?;
     fs::copy(desktop, portable.join(format!("{NAME}.desktop")))?;
-    let portable_icon = portable.join(format!("share/icons/hicolor/1024x1024/apps/{NAME}.png"));
-    fs::create_dir_all(
-        portable_icon
-            .parent()
-            .ok_or("Missing portable icon parent")?,
-    )?;
-    fs::copy(
-        root.join("Glossy Donut Chart in Blue Tray.png"),
-        portable_icon,
-    )?;
+    copy_dir(&icons, &portable.join("share/icons"))?;
+    normalize_modes(&portable)?;
     run(Command::new("tar")
-        .arg("-czf")
+        .args(["--owner=0", "--group=0", "--numeric-owner", "-czf"])
         .arg(out.join(format!("{NAME}-{version}-linux-{arch}.tar.gz")))
         .arg("-C")
         .arg(stage)
