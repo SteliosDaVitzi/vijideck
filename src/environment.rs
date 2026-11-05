@@ -4,7 +4,7 @@ use eframe::egui::{self, RichText};
 use eframe::emath::GuiRounding;
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
@@ -987,47 +987,20 @@ fn version(path: &Path, args: &str) -> String {
         return "Version unavailable (script wrapper)".into();
     }
     let mut cmd = Command::new(path);
-    cmd.args(args.split_whitespace())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    let Ok(mut child) = cmd.spawn() else {
-        return "Version unavailable".into();
-    };
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .ok()
-                    .and_then(|out| {
-                        let text = if out.stdout.is_empty() {
-                            out.stderr
-                        } else {
-                            out.stdout
-                        };
-                        String::from_utf8_lossy(&text)
-                            .lines()
-                            .find(|l| !l.trim().is_empty())
-                            .map(|l| l.trim().chars().take(200).collect())
-                    })
-                    .unwrap_or_else(|| "Version unavailable".into());
-            }
-            Ok(None) if start.elapsed() < Duration::from_secs(2) => {
-                std::thread::sleep(Duration::from_millis(20))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return "Version unavailable (timed out)".into();
-            }
+    cmd.args(args.split_whitespace());
+    match crate::command::capture(cmd, crate::command::Limits {
+        timeout: Duration::from_secs(2),
+        output_bytes: 1024 * 1024,
+    }) {
+        Ok(out) => {
+            let text = if out.stdout.is_empty() { out.stderr } else { out.stdout };
+            String::from_utf8_lossy(&text).lines()
+                .find(|line| !line.trim().is_empty())
+                .map(|line| line.trim().chars().take(200).collect())
+                .unwrap_or_else(|| "Version unavailable".into())
         }
+        Err(crate::command::Error::Timeout) => "Version unavailable (timed out)".into(),
+        Err(_) => "Version unavailable".into(),
     }
 }
 

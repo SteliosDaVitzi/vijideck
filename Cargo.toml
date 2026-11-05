@@ -1,9 +1,12 @@
 [package]
 name = "vijideck"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2024"
 description = "VijiDeck desktop utilities for system overview, port management, and disk cleanup"
-license = "MIT"
+license-file = "LICENSE"
+publish = false
+readme = "README.md"
+repository = "https://github.com/SteliosDaVitzi/vijideck"
 
 [dependencies]
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }

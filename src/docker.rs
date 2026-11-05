@@ -1,66 +1,12 @@
+pub(crate) mod client;
+mod model;
+
+use self::model::{Action, Container, Request, display_rows};
 use crate::ui::*;
 use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
-use std::{collections::{BTreeMap, HashSet}, process::{Command, Stdio}, sync::mpsc::{self, Receiver}, time::{Duration, Instant}};
+use std::{collections::HashSet, sync::mpsc::{self, Receiver}, time::{Duration, Instant}};
 
-const FORMAT: &str = r#"{"id":{{json .ID}},"name":{{json .Names}},"image":{{json .Image}},"state":{{json .State}},"status":{{json .Status}},"ports":{{json .Ports}},"project":{{json (.Label "com.docker.compose.project")}},"service":{{json (.Label "com.docker.compose.service")}}}"#;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Container {
-    id: String, name: String, image: String, state: String, status: String,
-    ports: String, project: String, service: String,
-}
-impl Container {
-    fn active(&self) -> bool { matches!(self.state.as_str(), "running" | "restarting" | "paused") }
-    fn startable(&self) -> bool { matches!(self.state.as_str(), "created" | "exited") }
-    fn matches(&self, query: &str) -> bool {
-        let text = format!("{} {} {} {} {} {} {}", self.id, self.name, self.image, self.status, self.ports, self.project, self.service).to_lowercase();
-        query.split_whitespace().all(|word| text.contains(&word.to_lowercase()))
-    }
-}
-fn parse(text: &str) -> Result<Vec<Container>, String> {
-    text.lines().filter(|line| !line.trim().is_empty()).map(|line| {
-        let value: serde_json::Value = serde_json::from_str(line).map_err(|e| format!("Invalid Docker response: {e}"))?;
-        let get = |key: &str| value[key].as_str().map(str::to_owned).ok_or_else(|| format!("Docker response is missing {key}"));
-        let id = get("id")?;
-        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) { return Err("Docker returned an invalid container ID".into()); }
-        Ok(Container { id, name: get("name")?, image: get("image")?, state: get("state")?, status: get("status")?, ports: get("ports")?, project: get("project")?, service: get("service")? })
-    }).collect()
-}
-
-// Drain both pipes while waiting so large inventories cannot fill an OS pipe.
-pub(crate) fn docker(args: &[String]) -> Result<String, String> {
-    use std::io::Read;
-    let mut command = Command::new("docker");
-    command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
-    let mut child = command.spawn().map_err(|e| format!("Cannot run Docker: {e}. Install Docker and ensure it is on PATH."))?;
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
-    let out = std::thread::spawn(move || { let mut b = Vec::new(); stdout.read_to_end(&mut b).map(|_| b) });
-    let err = std::thread::spawn(move || { let mut b = Vec::new(); stderr.read_to_end(&mut b).map(|_| b) });
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            result => { child.kill().ok(); child.wait().ok(); break Err(match result { Err(e) => e.to_string(), _ => "Docker timed out after 60 seconds. Refresh to check the result.".into() }); }
-        }
-    };
-    let output = out.join().map_err(|_| "Docker output reader failed")?.map_err(|e| e.to_string())?;
-    let error = err.join().map_err(|_| "Docker error reader failed")?.map_err(|e| e.to_string())?;
-    if !status?.success() { return Err(String::from_utf8_lossy(&error).trim().to_owned()); }
-    Ok(String::from_utf8_lossy(&output).into_owned())
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Action { Start, Stop, Delete }
-impl Action {
-    fn label(self) -> &'static str { match self { Self::Start => "Start", Self::Stop => "Stop", Self::Delete => "Delete" } }
-}
-#[derive(Clone)]
-struct Request { action: Action, name: String, containers: Vec<Container> }
 struct ResultEvent { snapshot: Result<Vec<Container>, String>, notice: Option<Result<String, String>> }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,13 +42,8 @@ impl Docker {
         let (tx, rx) = mpsc::channel(); self.rx = Some(rx);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let notice = request.map(|r| {
-                let mut args = vec![match r.action { Action::Start => "start", Action::Stop => "stop", Action::Delete => "rm" }.to_owned()];
-                if r.action == Action::Delete { args.push("--force".into()); }
-                args.extend(r.containers.iter().map(|c| c.id.clone()));
-                docker(&args).map(|_| format!("{} completed for {}. Refreshed container status.", r.action.label(), r.name))
-            });
-            let snapshot = docker(&["ps".into(), "--all".into(), "--no-trunc".into(), "--format".into(), FORMAT.into()]).and_then(|s| parse(&s));
+            let notice = request.map(|request| client::apply(&request));
+            let snapshot = client::inventory();
             tx.send(ResultEvent { snapshot, notice }).ok(); ctx.request_repaint();
         });
     }
@@ -310,75 +251,11 @@ fn actions(ui: &mut egui::Ui, name: &str, containers: &[Container], busy: bool, 
         }
     }
 }
-struct DisplayRow {
-    key: String,
-    name: String,
-    project: bool,
-    child: bool,
-    running: usize,
-    containers: Vec<Container>,
-}
-fn display_rows(containers: &[Container], expanded: &HashSet<String>, query: &str, running_only: bool) -> Vec<DisplayRow> {
-    let mut groups: BTreeMap<String, Vec<Container>> = BTreeMap::new();
-    let mut standalone = Vec::new();
-    for c in containers {
-        if c.project.is_empty() { standalone.push(c.clone()); }
-        else { groups.entry(c.project.clone()).or_default().push(c.clone()); }
-    }
-    let visible = |c: &Container| (!running_only || c.state == "running") && c.matches(query);
-    let container_row = |c: &Container, child| DisplayRow {
-        key: c.id.clone(), name: c.name.clone(), project: false, child,
-        running: usize::from(c.state == "running"), containers: vec![c.clone()],
-    };
-    let mut rows = Vec::new();
-    for (project, mut members) in groups {
-        members.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
-        if !members.iter().any(&visible) { continue; }
-        rows.push(DisplayRow {
-            key: format!("compose:{project}"), name: project.clone(), project: true, child: false,
-            running: members.iter().filter(|c| c.state == "running").count(), containers: members.clone(),
-        });
-        if expanded.contains(&project) {
-            rows.extend(members.iter().filter(|c| visible(c)).map(|c| container_row(c, true)));
-        }
-    }
-    standalone.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
-    rows.extend(standalone.iter().filter(|c| visible(c)).map(|c| container_row(c, false)));
-    rows
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn parses_compose_and_standalone_and_searches() {
-        let row = |project: &str| serde_json::json!({"id": "a".repeat(64), "name":"web-1", "image":"nginx", "state":"running", "status":"Up 2 hours (healthy)", "ports":"0.0.0.0:8080->80/tcp", "project":project, "service":"web"}).to_string();
-        let containers = parse(&format!("{}\n{}\n", row("shop"), row(""))).unwrap();
-        assert_eq!(containers.len(), 2);
-        assert_eq!(containers[0].project, "shop");
-        assert!(containers[1].project.is_empty());
-        assert!(containers[0].matches("SHOP 8080 healthy"));
-        assert!(!containers[1].matches("shop"));
-        assert!(containers[0].active());
-        assert!(!containers[0].startable());
-    }
-    #[test]
-    fn groups_are_stable_and_actions_keep_hidden_members() {
-        let make = |id: char, name: &str, state: &str, project: &str| Container {
-            id: id.to_string().repeat(64), name: name.into(), image: "image".into(), state: state.into(),
-            status: state.into(), ports: String::new(), project: project.into(), service: String::new(),
-        };
-        let mut inventory = vec![make('a', "web", "running", "shop"), make('b', "db", "exited", "shop"), make('c', "cache", "running", "")];
-        let expanded = HashSet::from(["shop".into()]);
-        let rows = display_rows(&inventory, &expanded, "", false);
-        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["shop", "db", "web", "cache"]);
-        assert!(rows[1].child);
-        let filtered = display_rows(&inventory, &expanded, "web", true);
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].containers.len(), 2, "group actions must include filtered children");
-        inventory.reverse();
-        assert_eq!(display_rows(&inventory, &expanded, "", false).iter().map(|r| &r.key).collect::<Vec<_>>(), rows.iter().map(|r| &r.key).collect::<Vec<_>>());
-    }
+
     #[test]
     fn layout_renders_at_minimum_and_full_width() {
         for width in [760.0, 1200.0] {
@@ -493,10 +370,4 @@ mod tests {
         assert!(docker.expanded.contains("shop"));
     }
 
-    #[test]
-    fn rejects_malformed_inventory() {
-        assert!(parse("not json").is_err());
-        assert!(parse(r#"{"id":"--help"}"#).is_err());
-        assert!(parse("").unwrap().is_empty());
-    }
 }

@@ -130,7 +130,7 @@ impl Resources {
         let kind = self.kind;
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = crate::docker::docker(&kind.args()).and_then(|text| parse(kind, &text));
+            let result = crate::docker::client::docker(&kind.args()).and_then(|text| parse(kind, &text));
             tx.send(result).ok();
             ctx.request_repaint();
         });

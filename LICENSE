@@ -1,0 +1,69 @@
+VijiDeck Personal and Internal Use License 1.0
+
+Copyright (c) 2026 Stelios Vitzilaios and VijiDeck contributors
+
+1. Scope and acceptance
+
+This license applies to VijiDeck source code, documentation, and original assets
+(the Software), except components identified as third-party materials. By
+exercising the permissions below, you accept this license. Rights not expressly
+granted are reserved. Third-party materials remain under their own licenses.
+The AppStream metadata file packaging/linux/app.vijideck.desktop.metainfo.xml
+is separately licensed under the MIT license in LICENSE.metadata.
+
+2. Permitted use
+
+Subject to these terms, you may use, reproduce, study, and modify the Software:
+(a) for your own personal purposes; and
+(b) within a company or other organization for its own internal professional or
+business purposes, including internal work supporting commercial activities.
+Employees and contractors may use the Software on behalf of that organization
+solely for those internal purposes. An organization may share copies with those
+employees and contractors for that purpose, subject to this license.
+
+You may distribute unmodified or modified copies without charge for
+noncommercial purposes, provided you include this license, preserve copyright
+and third-party notices, identify your modifications, and make the corresponding
+source code of the Software, including your modifications, available to recipients
+under this license. You may not impose additional restrictions on these rights.
+This source provision applies to redistribution outside your organization;
+private personal or internal modifications need not be published.
+
+3. Prohibited commercial exploitation
+
+Except for the internal use expressly permitted in section 2, you may not use,
+distribute, or exploit the Software or modified versions for commercial purposes.
+In particular, you may not:
+(a) sell, rent, lease, sublicense for a fee, or otherwise charge for the Software
+or access to any of its functionality;
+(b) offer its functionality to third parties as a hosted, managed, cloud, or
+software-as-a-service offering, whether charged separately or indirectly;
+(c) embed, bundle, or distribute it as part of a commercial product or service;
+or
+(d) use it to provide consulting, support, or other software services to external
+clients for compensation.
+These restrictions also apply to modified versions and derivative works. Internal
+use by an organization does not by itself require that organization's products,
+work output, or unrelated software to be licensed under this license.
+
+4. Separate permission and trademarks
+
+Uses outside these permissions require separate written permission from the
+applicable copyright holders. This license grants no rights to project names,
+logos, or trademarks except as needed to accurately identify the Software and
+preserve notices. Do not imply endorsement of modified versions.
+
+5. Termination
+
+Your permissions terminate automatically if you violate these terms. Upon
+termination, stop using and distributing the Software. Termination does not
+remove rights already granted to recipients who comply with this license.
+
+6. Disclaimer of warranty and limitation of liability
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. TO THE MAXIMUM EXTENT PERMITTED
+BY APPLICABLE LAW, THE AUTHORS AND COPYRIGHT HOLDERS ARE NOT LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.

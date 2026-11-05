@@ -1,9 +1,8 @@
 use serde_json::Value;
 use std::{
-    io::Read,
-    process::{Command, Stdio},
+    process::Command,
     sync::OnceLock,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub const LIMIT: usize = 2000;
@@ -231,54 +230,18 @@ fn command_failure(code: Option<i32>, stderr: &str, stdout: &str) -> ReadError {
     }
 }
 
-fn output(mut command: Command, elevated: bool) -> Result<Output, ReadError> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    let mut child = command.spawn().map_err(|e| ReadError::other(
-        format!("Cannot open the log reader: {e}. Check that the platform log utility and, if requesting access, the system authentication service are installed.")
-    ))?;
-    fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
-        std::thread::spawn(move || {
-            let mut result = Vec::new();
-            let mut buf = [0; 8192];
-            while let Ok(n) = pipe.read(&mut buf) {
-                if n == 0 {
-                    break;
-                }
-                let keep = n.min((32 * 1024 * 1024usize).saturating_sub(result.len()));
-                result.extend_from_slice(&buf[..keep]);
-            }
-            result
-        })
-    }
-    let stdout = drain(child.stdout.take().unwrap());
-    let stderr = drain(child.stderr.take().unwrap());
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if start.elapsed() < Duration::from_secs(if elevated { 120 } else { 30 }) => {
-                std::thread::sleep(Duration::from_millis(50))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("Log query timed out. Choose a shorter time range and retry.".into());
-            }
-        }
-    };
-    let out = stdout.join().unwrap_or_default();
-    let err = stderr.join().unwrap_or_default();
-    if out.len() >= 32 * 1024 * 1024 {
-        return Err("Log output exceeded 32 MiB. Choose a shorter time range.".into());
-    }
+fn output(command: Command, elevated: bool) -> Result<Output, ReadError> {
+    let captured = crate::command::capture(command, crate::command::Limits {
+        timeout: Duration::from_secs(if elevated { 120 } else { 30 }),
+        output_bytes: 32 * 1024 * 1024,
+    }).map_err(|error| ReadError::other(match error {
+        crate::command::Error::Timeout => "Log query timed out. Choose a shorter time range and retry.".into(),
+        crate::command::Error::OutputLimit => "Log output exceeded 32 MiB. Choose a shorter time range.".into(),
+        other => format!("Cannot open the log reader: {other}. Check that the platform log utility and, if requesting access, the system authentication service are installed."),
+    }))?;
+    let status = captured.status;
+    let out = captured.stdout;
+    let err = captured.stderr;
     if !status.success() {
         return Err(command_failure(
             status.code(),

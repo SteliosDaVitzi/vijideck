@@ -58,11 +58,9 @@ impl Background {
             let result = (|| -> Result<_, Box<dyn std::error::Error>> {
                 menu.append_items(&[&open, &widget, &hide, &quit])?;
                 let image = image::load_from_memory(include_bytes!(
-                    "../Glossy Donut Chart in Blue Tray.png"
+                    "../packaging/linux/icons/hicolor/32x32/apps/vijideck.png"
                 ))?
                 .to_rgba8();
-                let image =
-                    image::imageops::resize(&image, 32, 32, image::imageops::FilterType::Lanczos3);
                 let (width, height) = image.dimensions();
                 Ok(TrayIconBuilder::new()
                     .with_tooltip("VijiDeck — system monitor")

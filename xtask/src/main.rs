@@ -12,7 +12,22 @@ const TITLE: &str = "VijiDeck";
 
 fn run(command: &mut Command) -> Result<String> {
     eprintln!("Running: {command:?}");
-    let output = command.stderr(Stdio::inherit()).output()?;
+    let output = command.stderr(Stdio::inherit()).output().map_err(|error| {
+        let hint = if error.kind() == std::io::ErrorKind::NotFound {
+            match command.get_program().to_str() {
+                Some("dpkg-shlibdeps" | "dpkg-deb") =>
+                    " Install Debian packaging tools: sudo apt install dpkg-dev",
+                Some("appstreamcli") =>
+                    " Install AppStream validation tools: sudo apt install appstream",
+                Some("desktop-file-validate") =>
+                    " Install desktop validation tools: sudo apt install desktop-file-utils",
+                _ => " Check that the command is installed and available on PATH.",
+            }
+        } else {
+            ""
+        };
+        format!("Could not run {command:?}: {error}.{hint}")
+    })?;
     if !output.status.success() {
         return Err(format!(
             "Command failed ({}): {command:?}\n{}",
@@ -84,18 +99,38 @@ fn windows_compiler() -> Result<PathBuf> {
     Ok(compiler)
 }
 
+fn copy_notices(root: &Path, destination: &Path) -> Result {
+    fs::create_dir_all(destination)?;
+    for name in ["LICENSE", "LICENSE.metadata", "THIRD_PARTY_NOTICES.md"] {
+        fs::copy(root.join(name), destination.join(name))?;
+    }
+    let devicon = destination.join("assets/dev-tools");
+    fs::create_dir_all(&devicon)?;
+    fs::copy(
+        root.join("assets/dev-tools/LICENSE.devicon"),
+        devicon.join("LICENSE.devicon"),
+    )?;
+    Ok(())
+}
+
 fn windows(binary: &Path, out: &Path, version: &str, arch: &str, root: &Path) -> Result {
+    let portable = out.join("windows-portable");
+    fs::create_dir_all(&portable)?;
+    fs::copy(binary, portable.join("vijideck.exe"))?;
+    copy_notices(root, &portable)?;
     let compiler = windows_compiler()?;
     let icon = root.join("packaging/vijideck.ico");
     run(Command::new(compiler)
         .arg(format!("/DAppVersion={version}"))
+        .arg(format!("/DNoticePath={}", portable.display()))
         .arg(format!("/DBinaryPath={}", binary.display()))
         .arg(format!("/DIconPath={}", icon.display()))
         .arg(format!("/DOutputPath={}", out.display()))
         .arg(root.join("packaging/windows.iss")))?;
     run(Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command",
-        "$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath $env:VIJIDECK_BINARY -DestinationPath $env:VIJIDECK_ARCHIVE -Force"])
-        .env("VIJIDECK_BINARY", binary).env("VIJIDECK_ARCHIVE", out.join(format!("{NAME}-{version}-windows-{arch}.zip"))))?;
+        "$ErrorActionPreference='Stop'; Compress-Archive -Path (Join-Path $env:VIJIDECK_PORTABLE '*') -DestinationPath $env:VIJIDECK_ARCHIVE -Force"])
+        .env("VIJIDECK_PORTABLE", &portable).env("VIJIDECK_ARCHIVE", out.join(format!("{NAME}-{version}-windows-{arch}.zip"))))?;
+    fs::remove_dir_all(&portable)?;
     Ok(())
 }
 
@@ -133,6 +168,7 @@ fn macos(
             .arg(iconset.join(name)))?;
     }
     fs::create_dir_all(&resources)?;
+    copy_notices(root, &resources)?;
     run(Command::new("iconutil")
         .args(["-c", "icns"])
         .arg(&iconset)
@@ -153,6 +189,7 @@ fn macos(
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleShortVersionString</key><string>{version}</string>
 <key>CFBundleVersion</key><string>{version}</string>
+<key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Stelios Vitzilaios and VijiDeck contributors. VijiDeck Personal and Internal Use License 1.0. See Resources/LICENSE.</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
@@ -225,10 +262,19 @@ fn linux(
         ),
     )?;
     run(Command::new("desktop-file-validate").arg(&desktop))?;
+    let metainfo = root.join("packaging/linux/app.vijideck.desktop.metainfo.xml");
+    let installed_metainfo = package.join("usr/share/metainfo/app.vijideck.desktop.metainfo.xml");
+    write(&installed_metainfo, fs::read(&metainfo)?)?;
+    run(Command::new("appstreamcli")
+        .args(["validate", "--no-net"])
+        .arg(&installed_metainfo))?;
+    let documentation = package.join(format!("usr/share/doc/{NAME}"));
+    copy_notices(root, &documentation)?;
     write(
-        &package.join(format!("usr/share/doc/{NAME}/copyright")),
+        &documentation.join("copyright"),
         format!(
-            "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: {TITLE}\n\nFiles: *\nCopyright: VijiDeck contributors\nLicense: MIT\n"
+            "{TITLE}\n\n{}\n\nThird-party notices: THIRD_PARTY_NOTICES.md and assets/dev-tools/LICENSE.devicon\n",
+            fs::read_to_string(root.join("LICENSE"))?
         ),
     )?;
     normalize_modes(&package)?;
@@ -270,8 +316,13 @@ fn linux(
     let portable = stage.join(format!("{NAME}-{version}"));
     fs::create_dir(&portable)?;
     fs::copy(binary, portable.join(NAME))?;
+    copy_notices(root, &portable)?;
     fs::copy(desktop, portable.join(format!("{NAME}.desktop")))?;
     copy_dir(&icons, &portable.join("share/icons"))?;
+    write(
+        &portable.join("share/metainfo/app.vijideck.desktop.metainfo.xml"),
+        fs::read(&metainfo)?,
+    )?;
     normalize_modes(&portable)?;
     run(Command::new("tar")
         .args(["--owner=0", "--group=0", "--numeric-owner", "-czf"])

@@ -736,11 +736,7 @@ pub fn rail_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
 
 #[cfg(windows)]
 fn hardware_inventory() -> Hardware {
-    use std::{
-        io::Read,
-        os::windows::process::CommandExt,
-        process::{Command, Stdio},
-    };
+    use std::process::Command;
     // A fixed, read-only CIM query. No user content is interpolated into shell code.
     let script = r#"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -806,48 +802,17 @@ Report 'Keyboards' 'Win32_Keyboard' { $_.Name }
 Report 'Pointing devices' 'Win32_PointingDevice' { $_.Name }
 "#;
     let result = (|| -> Result<String, String> {
-        // Drain the pipe concurrently so large inventories cannot block the provider.
-        let mut child = Command::new("powershell.exe")
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                script,
-            ])
-            .creation_flags(0x08000000)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let mut stdout = child.stdout.take().ok_or("Hardware output unavailable")?;
-        let reader = std::thread::spawn(move || {
-            let mut output = Vec::new();
-            stdout.read_to_end(&mut output).map(|_| output)
-        });
-        let started = Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if started.elapsed() < Duration::from_secs(25) => {
-                    std::thread::sleep(Duration::from_millis(100))
-                }
-                _ => {
-                    child.kill().ok();
-                    child.wait().ok();
-                    return Err("Hardware inventory timed out or could not be read.".into());
-                }
-            }
-        }
-        let status = child.wait().map_err(|e| e.to_string())?;
-        let output = reader
-            .join()
-            .map_err(|_| "Hardware output reader failed")?
-            .map_err(|e| e.to_string())?;
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]);
+        let output = crate::command::capture(command, crate::command::Limits {
+            timeout: Duration::from_secs(25),
+            output_bytes: 4 * 1024 * 1024,
+        }).map_err(|error| format!("Hardware inventory could not be read: {error}"))?;
+        let status = output.status;
         if !status.success() {
             return Err("Windows hardware inventory could not be read.".into());
         }
-        Ok(String::from_utf8_lossy(&output).into_owned())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     })();
     match result {
         Ok(output) => Hardware {

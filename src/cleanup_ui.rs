@@ -974,78 +974,82 @@ impl Cleanup {
                 self.reset_filters();
             }
         } else {
-            table_ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                let mut all = selectable > 0 && visible_selected == selectable;
-                if ui
-                    .add_enabled(
-                        can_select && selectable > 0,
-                        egui::Checkbox::without_text(&mut all)
-                            .indeterminate(visible_selected > 0 && visible_selected < selectable),
-                    )
-                    .on_hover_text("Select or clear all visible folders")
-                    .changed()
-                {
-                    for &i in &self.rows {
-                        let e = &scan.entries[i];
-                        if e.issue.is_none() {
-                            if all {
-                                self.selected.insert(e.path.clone());
-                            } else {
-                                self.selected.remove(&e.path);
+            // Match the result cards' 10 px margin plus 1 px border.
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(11, 0))
+                .show(&mut table_ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut all = selectable > 0 && visible_selected == selectable;
+                        if ui
+                            .add_enabled(
+                                can_select && selectable > 0,
+                                egui::Checkbox::without_text(&mut all)
+                                    .indeterminate(visible_selected > 0 && visible_selected < selectable),
+                            )
+                            .on_hover_text("Select or clear all visible folders")
+                            .changed()
+                        {
+                            for &i in &self.rows {
+                                let e = &scan.entries[i];
+                                if e.issue.is_none() {
+                                    if all {
+                                        self.selected.insert(e.path.clone());
+                                    } else {
+                                        self.selected.remove(&e.path);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                let card_width = (table_rect.width() - 16.0).clamp(320.0, 900.0);
-                let columns = result_columns(card_width, wide);
-                ui.allocate_space(egui::vec2(24.0, 18.0));
-                fixed_cell(
-                    ui,
-                    columns,
-                    18.0,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "Folder  ·  {} matching",
-                                number(self.rows.len())
-                            ))
-                            .size(10.0)
-                            .color(MUTED),
+                        let card_width = (table_rect.width() - 16.0).max(320.0);
+                        let columns = result_columns(card_width, wide);
+                        ui.allocate_space(egui::vec2(24.0, 18.0));
+                        fixed_cell(
+                            ui,
+                            columns,
+                            18.0,
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Folder  ·  {} matching",
+                                        number(self.rows.len())
+                                    ))
+                                    .size(10.0)
+                                    .color(MUTED),
+                                );
+                            },
                         );
-                    },
-                );
-                fixed_cell(
-                    ui,
-                    150.0,
-                    18.0,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.label(RichText::new("Source").size(10.0).color(MUTED));
-                    },
-                );
-                fixed_cell(
-                    ui,
-                    84.0,
-                    18.0,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.label(RichText::new("Size").size(10.0).color(MUTED));
-                    },
-                );
-                if wide {
-                    fixed_cell(
-                        ui,
-                        110.0,
-                        18.0,
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label(RichText::new("Modified").size(10.0).color(MUTED));
-                        },
-                    );
-                }
-            });
+                        fixed_cell(
+                            ui,
+                            150.0,
+                            18.0,
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.label(RichText::new("Source").size(10.0).color(MUTED));
+                            },
+                        );
+                        fixed_cell(
+                            ui,
+                            84.0,
+                            18.0,
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.label(RichText::new("Size").size(10.0).color(MUTED));
+                            },
+                        );
+                        if wide {
+                            fixed_cell(
+                                ui,
+                                110.0,
+                                18.0,
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(RichText::new("Modified").size(10.0).color(MUTED));
+                                },
+                            );
+                        }
+                    });
+                });
             table_ui.add_space(5.0);
 
             egui::ScrollArea::vertical()
