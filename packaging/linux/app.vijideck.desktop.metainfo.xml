@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- SPDX-License-Identifier: MIT; this metadata file only. -->
+<!-- Covered by the repository LICENSE. -->
 <component type="desktop-application">
   <id>app.vijideck.desktop</id>
-  <metadata_license>MIT</metadata_license>
+  <metadata_license>LicenseRef-VijiDeck-Personal-and-Internal-Use-1.0</metadata_license>
   <project_license>LicenseRef-proprietary=https://github.com/SteliosDaVitzi/vijideck/blob/main/LICENSE</project_license>
   <name>VijiDeck</name>
   <summary>Monitor your system and manage your development environment</summary>

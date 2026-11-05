@@ -17,8 +17,6 @@ fn run(command: &mut Command) -> Result<String> {
             match command.get_program().to_str() {
                 Some("dpkg-shlibdeps" | "dpkg-deb") =>
                     " Install Debian packaging tools: sudo apt install dpkg-dev",
-                Some("appstreamcli") =>
-                    " Install AppStream validation tools: sudo apt install appstream",
                 Some("desktop-file-validate") =>
                     " Install desktop validation tools: sudo apt install desktop-file-utils",
                 _ => " Check that the command is installed and available on PATH.",
@@ -101,7 +99,7 @@ fn windows_compiler() -> Result<PathBuf> {
 
 fn copy_notices(root: &Path, destination: &Path) -> Result {
     fs::create_dir_all(destination)?;
-    for name in ["LICENSE", "LICENSE.metadata", "THIRD_PARTY_NOTICES.md"] {
+    for name in ["LICENSE", "THIRD_PARTY_NOTICES.md"] {
         fs::copy(root.join(name), destination.join(name))?;
     }
     let devicon = destination.join("assets/dev-tools");
@@ -265,9 +263,8 @@ fn linux(
     let metainfo = root.join("packaging/linux/app.vijideck.desktop.metainfo.xml");
     let installed_metainfo = package.join("usr/share/metainfo/app.vijideck.desktop.metainfo.xml");
     write(&installed_metainfo, fs::read(&metainfo)?)?;
-    run(Command::new("appstreamcli")
-        .args(["validate", "--no-net"])
-        .arg(&installed_metainfo))?;
+    // The custom metadata license is intentionally outside AppStream catalog policy.
+    // Keep the license reference available to consumers without requiring catalog validation.
     let documentation = package.join(format!("usr/share/doc/{NAME}"));
     copy_notices(root, &documentation)?;
     write(

@@ -41,7 +41,6 @@ Source: "{#BinaryPath}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#IconPath}"; DestDir: "{app}"; DestName: "vijideck.ico"; Flags: ignoreversion
 
 Source: "{#NoticePath}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#NoticePath}\LICENSE.metadata"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#NoticePath}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#NoticePath}\assets\dev-tools\LICENSE.devicon"; DestDir: "{app}\assets\dev-tools"; Flags: ignoreversion
 

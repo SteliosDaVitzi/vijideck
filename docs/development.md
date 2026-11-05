@@ -16,7 +16,7 @@ The `xtask` command is a separate Rust tool with no crate dependencies; Python i
 | --- | --- | --- |
 | Windows x64 | [Inno Setup 6](https://jrsoftware.org/isdl.php) (CI uses 6.4.0); set `ISCC` to `ISCC.exe` if installed outside the default locations | `*-setup.exe` wizard and portable `.zip`. The installer, running window, Start menu shortcut, optional desktop shortcut, and uninstaller use the app icon. Choose **Install for me** (the default, under `%LOCALAPPDATA%\Programs`, without elevation) or **Install for everyone** (under Program Files, with a Windows UAC prompt). The wizard also offers an installation folder, Start menu folder, optional desktop shortcut, and launch after installation. Remove through Windows Settings → Apps. Rerunning a newer installer upgrades the same installation in the selected scope. Silent installs can use `/CURRENTUSER` or `/ALLUSERS`. |
 | macOS Apple Silicon / Intel | Xcode Command Line Tools (`hdiutil` and `codesign` are built in) | Architecture-specific `.dmg` containing `VijiDeck.app` with its app icon and an Applications shortcut. Open the DMG and drag the app into Applications; eject the DMG. Remove the app from Applications to uninstall. |
-| Linux x64 (Debian/Ubuntu) | `sudo apt-get install dpkg-dev desktop-file-utils appstream` | `.deb` with application-menu entry and hicolor app icons (16–512 px, from `packaging/linux/icons`), plus a portable `.tar.gz` containing the same icon tree. Install with `sudo apt install ./vijideck-<version>-linux-x86_64.deb`; remove with `sudo apt remove vijideck`. Extract the portable archive and run `./vijideck`; it requires the same desktop libraries as the Debian package. |
+| Linux x64 (Debian/Ubuntu) | `sudo apt-get install dpkg-dev desktop-file-utils` | `.deb` with application-menu entry and hicolor app icons (16–512 px, from `packaging/linux/icons`), plus a portable `.tar.gz` containing the same icon tree. Install with `sudo apt install ./vijideck-<version>-linux-x86_64.deb`; remove with `sudo apt remove vijideck`. Extract the portable archive and run `./vijideck`; it requires the same desktop libraries as the Debian package. |
 
 CI builds Windows x64, macOS Intel and Apple Silicon, and Linux x64 packages on every push, pull request, and manual run. Linux builds use Ubuntu 22.04 as the baseline; the Debian package calculates versioned linked-library dependencies and declares dynamically loaded desktop libraries. Other Linux distributions can use the portable archive when compatible libraries are available; RPM and AppImage are not supplied. The Linux packager also supports native arm64 builds, but these are not covered by the CI matrix. The `.deb` requires at least the glibc version of the machine that built it, so a package built locally on a newer distribution (for example Ubuntu 26.04) will not install on Debian 12/13; use the CI artifacts, or build on the oldest Debian/Ubuntu release you need to support.
 
@@ -49,8 +49,11 @@ Sources: [eframe](https://docs.rs/eframe/0.33.3/eframe/), [netstat2](https://doc
 
 Linux packages install AppStream metadata with a custom/proprietary license reference
 and a link to the full terms. Software centers may label this as proprietary or
-special; they do not all display custom license names. The metadata file itself
-is MIT-licensed for catalog aggregation; the application retains its custom license.
+special; they do not all display custom license names. The metadata file and
+application are covered by the same custom license. AppStream requires permissive
+metadata licensing, so this file does not meet that catalog requirement and some
+software centers may decline to index it. Packaging therefore does not require
+AppStream catalog validation.
 Windows setup displays the full license and carries publisher/copyright metadata.
 macOS bundles include a human-readable copyright/license notice in Info.plist and
 the full terms in Contents/Resources/LICENSE. Rebuild packages to apply these changes.
