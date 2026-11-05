@@ -426,8 +426,8 @@ pub fn docker_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     painter.rect_filled(rect, 5.0, if active { Color32::from_rgb(17, 39, 48) } else { PANEL });
     for (x, y) in [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, -1)] {
         let min = rect.center() + egui::vec2(-10.0 + x as f32 * 7.0, -5.0 + y as f32 * 7.0);
-        painter.rect_stroke(egui::Rect::from_min_size(min, Vec2::splat(5.0)), 0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
+        painter.rect_stroke(egui::Rect::from_min_size(min, Vec2::splat(5.0)), 0, Stroke::new(1.2_f32, color), egui::StrokeKind::Inside);
     }
-    if selected { painter.line_segment([rect.left_top() + egui::vec2(0.0, 9.0), rect.left_bottom() - egui::vec2(0.0, 9.0)], Stroke::new(2.0, CYAN)); }
+    if selected { painter.line_segment([rect.left_top() + egui::vec2(0.0, 9.0), rect.left_bottom() - egui::vec2(0.0, 9.0)], Stroke::new(2.0_f32, CYAN)); }
     response.on_hover_text("Docker containers")
 }
