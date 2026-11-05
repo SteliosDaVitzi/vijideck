@@ -157,7 +157,7 @@ impl Resources {
         }
         ui.horizontal_wrapped(|ui| {
             let width = (ui.available_width() - 180.0).clamp(180.0, 480.0);
-            egui::Frame::new().fill(PANEL).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(5)
+            egui::Frame::new().fill(PANEL).stroke(egui::Stroke::new(1.0_f32, LINE)).corner_radius(5)
                 .inner_margin(egui::Margin::symmetric(12, 9)).show(ui, |ui| {
                     ui.add_sized([width, 22.0], egui::TextEdit::singleline(&mut self.query)
                         .hint_text(format!("Search {}…", self.kind.label())).frame(false));

@@ -683,11 +683,11 @@ fn save(name: &str, value: Option<&str>, _: usize) -> Result<(), String> {
     let mut result = String::new();
     while let Some(line) = lines.next() {
         if line.starts_with(&marker) {
-            if let Some(next) = lines.next() {
-                if !next.starts_with(&export) {
-                    result.push_str(next);
-                    result.push('\n');
-                }
+            if let Some(next) = lines.next()
+                && !next.starts_with(&export)
+            {
+                result.push_str(next);
+                result.push('\n');
             }
         } else {
             result.push_str(line);
