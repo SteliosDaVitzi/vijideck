@@ -62,6 +62,14 @@ The app opens on **System overview**. The first icon in the tool rail returns to
 - macOS/Linux show portable telemetry and kernel/architecture details; extended device inventory and GPU utilization are currently Windows-only. VRAM usage and fan speeds are not collected. Temperature availability depends on OS and drivers. Memory totals represent usable memory. Network rates include virtual and loopback interfaces and do not measure internet connection speed.
 - The overview scrolls to the complete inventory and network list, and adapts its processor/storage layout at the minimum window size. No hardware data is sent anywhere.
 
+## Process groups and mounted volumes
+
+On Windows, Processes groups Explorer and its descendants separately from system and other processes. On Linux and macOS, the first section is **User processes**, based on the owner of the running VijiDeck process; it includes that user's applications and background processes. Processes owned by other accounts appear under **System**, and unavailable ownership appears under **Other**. Name, PID, CPU, Memory, and Status headers toggle sorting within each section. CPU and Memory sort application groups by their displayed totals, and expanded children remain beneath their group. Search preserves process ancestry and ownership classification.
+
+Overview and Disk cleanup share the same volume filter. Linux hides boot/EFI, Docker/Podman/container runtime mounts, Snap images, and virtual system filesystems; ordinary root, home, data, and removable volumes remain visible. Cleanup also skips recognized container storage trees during discovery and cached-result validation. Its mount-boundary checks continue to use the complete mount list. On macOS, the writable Data volume is preferred over the paired system root when present; internal APFS service volumes are hidden and external volumes remain visible. Windows drive letters and mounted data volumes are retained.
+
+The regression tests exercise Windows, macOS, and Linux grouping and volume rules on every CI runner. Native CI builds cover Windows x64, macOS Intel/Apple Silicon, and Linux x64; interactive desktop behavior still requires validation on each operating system.
+
 ## Developer environment
 
 Choose **</>** in the tool rail to inventory common languages, runtimes, package managers, and developer tools. The scan runs in the background; search filters names, versions, and paths, and Refresh rescans the current environment. Expand a technology group to see its installations and related tools, such as Python and pip. Each entry shows its path, reported version, and whether its directory is on the PATH inherited by VijiDeck. The app searches the user directory and platform-specific installation trees to a depth of seven directories, with a limit of 50,000 directories per root. It skips links and common project dependencies and caches. Search limits and inaccessible directories mean results are not exhaustive. Restart VijiDeck to pick up environment changes made after launch. Version checks execute the discovered tools locally with a version argument and a timeout. Windows command and batch wrappers are listed but their versions are unavailable. Some tools or versions may be inaccessible or absent from the supported list.
@@ -152,3 +160,44 @@ Native macOS and Linux runtime verification requires those operating systems; th
 VijiDeck stores port-manager auto-refresh, listening-only filter, protocol, and sorting preferences in a local SQLite database. On Windows it is located at `%LOCALAPPDATA%\VijiDeck\vijideck.sqlite3`; on macOS at `~/Library/Application Support/VijiDeck/vijideck.sqlite3`; and on Linux at `$XDG_DATA_HOME/vijideck/vijideck.sqlite3` (or `~/.local/share/vijideck/vijideck.sqlite3`). The database is created on first launch. If it cannot be opened, the app uses defaults for that session. Screenshot previews do not use the database.
 
 Developer tool locations and the most recently completed cleanup disk scan are cached in SQLite. On startup, cached tool paths are checked and versions refreshed; cached cleanup folders are reclassified and remeasured before they appear. A background sync then searches for new results, with a syncing indicator in each view. The first cleanup scan still requires choosing a disk; subsequent launches rescan that disk automatically. Cancelled cleanup scans do not replace the last completed cache. Cleanup selections remain disabled during scanning, and deletion still performs its own fresh validation.
+
+### Docker
+
+Horizontal **Containers**, **Images**, and **Volumes** tabs show inventories from the current Docker context. Images lists repository, tag, full image ID, creation date, and size, including untagged images. An image with several tags can appear in several rows. Volumes lists name, driver, scope, and the daemon's mount point. Images and Volumes each have independent search and auto-refresh controls; Refresh retries the active tab. Switching tabs preserves container filters and Compose expansion and closes any container log stream.
+
+The Containers tab lists running and stopped containers from the Docker CLI's current
+context/environment. Docker must be installed on PATH, with a running daemon that
+your account can access. The view refreshes every three seconds while open; auto
+refresh can be paused, and Refresh retries connection errors.
+
+Compose projects appear as expandable rows with their containers underneath.
+Search by project, service, container name, image, status, ID, or port, or select
+Running only. Start and Stop work on individual containers or eligible containers
+in a whole project. Project actions include all its containers even when a search
+hides some children. Start operates on existing containers; it does not recreate
+containers or apply Compose dependency ordering.
+
+Delete asks for confirmation and removes the listed containers, including running
+ones. Container writable data is lost; images, volumes, and networks are kept.
+After deleting a Compose project's containers, use `docker compose up` from the
+project directory to recreate them. Command errors are shown in the tool and the
+inventory is refreshed after actions, including partially successful actions.
+
+Container rows include a **Logs** button. It opens a resizable bottom drawer with
+live stdout and stderr, starting with the last 200 timestamped lines. Toggle
+Follow to read older output, Clear to clear the visible buffer, or Close to stop
+the stream. History is capped at 2,000 lines; very long lines are split into
+bounded chunks. Switching containers or leaving the Docker tool closes the
+previous stream. Click Logs again to reconnect an ended stream.
+
+Background inventory refreshes preserve the table, expansion state, scroll
+position and enabled controls. Start, Stop and Delete temporarily disable only
+mutation actions while their command runs; an action requested during an inventory
+scan is queued until that scan completes.
+
+Container actions use egui's bundled play, stop and trash symbols and a classic `>_` terminal icon with
+hover tooltips. Compose rows use egui's built-in disclosure arrow. The terminal
+button is enabled for running containers and opens `docker exec -it <id> sh` in
+a desktop terminal (Konsole/system terminal on Linux, Windows Terminal or
+PowerShell on Windows, Terminal on macOS). Exit the shell to leave the session.
+Containers without `sh` report that error in the terminal.

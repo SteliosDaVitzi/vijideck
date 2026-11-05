@@ -27,9 +27,9 @@ struct Disk {
     kind: String,
 }
 fn disks() -> Vec<Disk> {
-    let mut disks: Vec<_> = sysinfo::Disks::new_with_refreshed_list()
-        .list()
-        .iter()
+    let reported = sysinfo::Disks::new_with_refreshed_list();
+    let mut disks: Vec<_> = crate::volumes::visible(&reported)
+        .into_iter()
         .map(|d| Disk {
             path: d.mount_point().to_path_buf(),
             name: d.name().to_string_lossy().into_owned(),

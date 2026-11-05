@@ -4,6 +4,10 @@ mod app;
 mod background;
 mod cleanup;
 mod cleanup_ui;
+mod docker;
+mod docker_logs;
+mod docker_resources;
+mod docker_terminal;
 mod environment;
 mod environment_icons;
 mod environment_origin;
@@ -19,6 +23,7 @@ mod ports;
 mod processes;
 mod storage;
 mod ui;
+mod volumes;
 
 fn main() -> eframe::Result {
     let icon = image::load_from_memory(include_bytes!("../Glossy Donut Chart in Blue Tray.png"))

@@ -29,6 +29,7 @@ pub struct VijiDeck {
     cleanup: crate::cleanup_ui::Cleanup,
     logs: crate::logs_ui::Logs,
     environment: crate::environment::Environment,
+    docker: crate::docker::Docker,
     tx: Sender<Command>,
     rx: Receiver<Event>,
     snapshot: Snapshot,
@@ -109,6 +110,7 @@ impl VijiDeck {
             cleanup: crate::cleanup_ui::Cleanup::new(),
             logs: crate::logs_ui::Logs::new(),
             environment: crate::environment::Environment::new(),
+            docker: crate::docker::Docker::new(),
             tx,
             rx,
             snapshot,
@@ -159,6 +161,7 @@ impl VijiDeck {
                 Ok("overview" | "overview-hardware" | "widget") => self.active_tool = 2,
                 Ok("processes") => self.active_tool = 4,
                 Ok("environment") => self.active_tool = 5,
+                Ok("docker") => self.active_tool = 6,
                 Ok("logs") => self.active_tool = 3,
                 Ok("logs-list") => {
                     self.active_tool = 3;
@@ -281,6 +284,8 @@ impl VijiDeck {
                             "Port manager"
                         } else if self.active_tool == 1 {
                             "Disk cleanup"
+                        } else if self.active_tool == 6 {
+                            "Docker"
                         } else if self.active_tool == 5 {
                             "Developer environment"
                         } else if self.active_tool == 3 || self.active_tool == 4 {
@@ -430,6 +435,13 @@ impl VijiDeck {
                         self.active_tool = 5;
                     }
                 });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if docker_icon(ui, self.active_tool == 6).clicked() {
+                        self.active_tool = 6;
+                    }
+                });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.add_space(18.0);
                     caption(ui, "v0.1");
@@ -455,7 +467,9 @@ impl VijiDeck {
                         },
                     );
                     ui.label(
-                        RichText::new(if self.active_tool == 5 {
+                        RichText::new(if self.active_tool == 6 {
+                            self.docker.status()
+                        } else if self.active_tool == 5 {
                             self.environment.status()
                         } else if self.active_tool == 1 {
                             self.cleanup.status()
@@ -484,7 +498,9 @@ impl VijiDeck {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(20.0);
                         ui.label(
-                            RichText::new(if self.active_tool == 5 {
+                            RichText::new(if self.active_tool == 6 {
+                                "Docker / refresh every 3 seconds".to_owned()
+                            } else if self.active_tool == 5 {
                                 "Local environment".to_owned()
                             } else if self.active_tool == 1 {
                                 "Local files / no automatic deletion".to_owned()
@@ -1160,6 +1176,8 @@ impl eframe::App for VijiDeck {
         self.background.poll(ctx);
         self.background.sync_window_shape();
         self.background.sync_window_size(ctx);
+        if self.active_tool != 6 || self.background.compact { self.docker.close_logs(); }
+        self.docker.poll();
         self.cleanup.poll();
         self.overview.poll();
         while let Ok(event) = self.rx.try_recv() {
@@ -1208,6 +1226,12 @@ impl eframe::App for VijiDeck {
         self.top_bar(ctx);
         self.status_bar(ctx);
         self.tool_rail(ctx);
+        if self.active_tool == 6 {
+            self.docker.show(ctx);
+            #[cfg(feature = "ui-preview")]
+            self.capture_preview(ctx);
+            return;
+        }
         if self.active_tool == 5 {
             self.environment.show(ctx);
             #[cfg(feature = "ui-preview")]

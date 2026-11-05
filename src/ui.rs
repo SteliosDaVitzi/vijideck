@@ -417,3 +417,17 @@ pub fn port_heading(ui: &mut egui::Ui, port: u16, protocol: &str, state: &str, c
         MUTED,
     );
 }
+
+pub fn docker_icon(ui: &mut egui::Ui, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(44.0), egui::Sense::click());
+    let active = selected || response.hovered() || response.has_focus();
+    let color = if active { CYAN } else { MUTED };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 5.0, if active { Color32::from_rgb(17, 39, 48) } else { PANEL });
+    for (x, y) in [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, -1)] {
+        let min = rect.center() + egui::vec2(-10.0 + x as f32 * 7.0, -5.0 + y as f32 * 7.0);
+        painter.rect_stroke(egui::Rect::from_min_size(min, Vec2::splat(5.0)), 0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
+    }
+    if selected { painter.line_segment([rect.left_top() + egui::vec2(0.0, 9.0), rect.left_bottom() - egui::vec2(0.0, 9.0)], Stroke::new(2.0, CYAN)); }
+    response.on_hover_text("Docker containers")
+}

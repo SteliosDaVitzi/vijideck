@@ -128,6 +128,10 @@ fn classify(path: &Path, siblings: &HashSet<String>) -> Option<(&'static str, &'
 }
 
 fn excluded(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    if crate::volumes::linux_internal_path(path) {
+        return true;
+    }
     let name = path
         .file_name()
         .unwrap_or_default()
@@ -227,6 +231,11 @@ fn scan_with_workers(
         }
     };
     result.root = root.clone();
+    #[cfg(target_os = "linux")]
+    if crate::volumes::linux_internal_path(&root) {
+        note(&mut result, &root, "System and container storage is excluded from cleanup");
+        return result;
+    }
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let disk = disks
         .list()
@@ -574,6 +583,10 @@ pub fn delete(root: &Path, candidates: &[Candidate]) -> DeleteReport {
 }
 
 fn validate_path(root: &Path, path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if crate::volumes::linux_internal_path(path) {
+        return Err(io::Error::other("System and container storage is excluded from cleanup"));
+    }
     if !root.is_absolute()
         || path == root
         || !path.starts_with(root)
@@ -661,6 +674,24 @@ mod tests {
             fs::remove_dir_all(&self.0).ok();
         }
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn container_storage_is_skipped_in_scan_and_cached_results() {
+        let f = Fixture::new();
+        f.file(".local/share/docker/volumes/project/package.json", "{}");
+        f.file(".local/share/docker/volumes/project/node_modules/pkg/file", "keep");
+        f.file("project/package.json", "{}");
+        f.file("project/node_modules/pkg/file", "123");
+        let scan = f.scan();
+        assert_eq!(scan.entries.len(), 1);
+        assert_eq!(scan.entries[0].path, f.0.join("project/node_modules"));
+        let container_path = f.0.join(".local/share/docker/volumes/project/node_modules");
+        assert!(validate_cached(&scan.root, &container_path, &AtomicBool::new(false)).is_none());
+        let direct = super::scan(&f.0.join(".local/share/docker"), &AtomicBool::new(false), |_| {});
+        assert!(direct.entries.is_empty());
+        assert!(direct.skipped > 0);
+    }
+
     /// Reproducible warm-cache traversal benchmark, excluding fixture creation.
     #[test]
     #[ignore]

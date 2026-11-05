@@ -135,8 +135,8 @@ impl Overview {
                         total_memory: system.total_memory(),
                         swap: system.used_swap(),
                         total_swap: system.total_swap(),
-                        disks: disks
-                            .iter()
+                        disks: crate::volumes::visible(&disks)
+                            .into_iter()
                             .map(|disk| Volume {
                                 name: disk.name().to_string_lossy().into_owned(),
                                 mount: disk.mount_point().display().to_string(),
