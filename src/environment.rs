@@ -222,7 +222,14 @@ struct Entry {
     on_path: bool,
     version: String,
     origin: Origin,
+    /// The user explicitly allowed running this file outside trusted locations.
+    approved: bool,
 }
+/// Shown for executables found outside trusted install locations that the user
+/// has not approved. They are listed but never run automatically.
+const UNCHECKED: &str = "Version unavailable (not run: found outside trusted locations)";
+/// Result of a user-approved version check: (path, version output).
+type Check = (PathBuf, String);
 enum ScanEvent {
     Directory(PathBuf),
     Restored(Vec<Entry>),
@@ -239,6 +246,8 @@ pub struct Environment {
     scanned: bool,
     path_confirmation: Option<(PathBuf, bool)>,
     path_notice: Option<String>,
+    run_confirmation: Option<PathBuf>,
+    checks: (mpsc::Sender<Check>, Receiver<Check>),
     icons: std::collections::HashMap<(&'static str, u32), Option<egui::TextureHandle>>,
 }
 impl Environment {
@@ -259,6 +268,8 @@ impl Environment {
             scanned: false,
             path_confirmation: None,
             path_notice: None,
+            run_confirmation: None,
+            checks: mpsc::channel(),
             icons: std::collections::HashMap::new(),
         }
     }
@@ -274,14 +285,14 @@ impl Environment {
         std::thread::spawn(move || {
             let detector = OriginDetector::new();
             let store = crate::storage::Storage::open_cache();
+            let mut approvals = std::collections::HashSet::new();
             if let Some(value) = store
                 .as_ref()
                 .and_then(|s| s.load_cache("environment").ok().flatten())
             {
                 let mut restored = Vec::new();
-                let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
-                    .map(|v| std::env::split_paths(&v).collect())
-                    .unwrap_or_default();
+                let path_dirs = path_dirs();
+                let trust = Trust::new();
                 if let Some(items) = value.as_array() {
                     for item in items {
                         let Some(spec) = item
@@ -307,12 +318,25 @@ impl Environment {
                             std::fs::canonicalize(dir).ok() == std::fs::canonicalize(parent).ok()
                                 && dir.is_dir()
                         });
+                        let approved = item
+                            .get("approved")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if approved {
+                            approvals.insert(canonical(&path));
+                        }
+                        let runnable = approved || trust.allows(&path);
                         restored.push(Entry {
                             name: spec.name,
-                            version: version(&path, spec.arg),
+                            version: if runnable {
+                                version(&path, spec.arg)
+                            } else {
+                                UNCHECKED.into()
+                            },
                             origin: detector.classify(spec.name, &path),
                             path,
                             on_path,
+                            approved,
                         });
                     }
                 }
@@ -327,20 +351,40 @@ impl Environment {
                     last_update = Instant::now();
                 }
             };
-            let result = collect(&detector, &mut progress);
-            let value = serde_json::json!(
-                result
-                    .iter()
-                    .map(|entry| serde_json::json!({"name": entry.name, "path": entry.path, "version": entry.version, "on_path": entry.on_path}))
-                    .collect::<Vec<_>>()
-            );
-            if let Some(store) = store
-                && let Err(error) = store.save_cache("environment", &value)
-            {
-                eprintln!("Could not save environment cache: {error}");
-            }
+            let result = collect(&detector, &approvals, &mut progress);
+            save_cache(store.as_ref(), &result);
             let _ = tx.send(ScanEvent::Finished(result));
             ctx.request_repaint();
+        });
+    }
+    fn finish_checks(&mut self) {
+        let mut changed = false;
+        while let Ok((path, version)) = self.checks.1.try_recv() {
+            for entry in self.entries.iter_mut().filter(|e| e.path == path) {
+                entry.version = version.clone();
+                entry.approved = true;
+                changed = true;
+            }
+        }
+        // While a scan is running, its Finished handler merges and saves approvals.
+        if changed && self.rx.is_none() {
+            save_cache(crate::storage::Storage::open_cache().as_ref(), &self.entries);
+        }
+    }
+    fn approve(&mut self, path: PathBuf) {
+        let Some(spec) = self
+            .entries
+            .iter()
+            .find(|e| e.path == path)
+            .and_then(|e| TOOLS.iter().find(|s| s.name == e.name))
+        else {
+            return;
+        };
+        let arg = spec.arg;
+        let tx = self.checks.0.clone();
+        std::thread::spawn(move || {
+            let result = version(&path, arg);
+            let _ = tx.send((path, result));
         });
     }
     pub fn status(&self) -> &'static str {
@@ -365,7 +409,18 @@ impl Environment {
                 match event {
                     ScanEvent::Directory(path) => self.current_dir = Some(path),
                     ScanEvent::Restored(entries) => self.entries = entries,
-                    ScanEvent::Finished(entries) => {
+                    ScanEvent::Finished(mut entries) => {
+                        // Keep approvals granted while the scan was running.
+                        for entry in entries.iter_mut().filter(|e| !e.approved) {
+                            if let Some(old) = self
+                                .entries
+                                .iter()
+                                .find(|old| old.approved && old.path == entry.path)
+                            {
+                                entry.version = old.version.clone();
+                                entry.approved = true;
+                            }
+                        }
                         self.entries = entries;
                         finished = true;
                     }
@@ -375,7 +430,9 @@ impl Environment {
         if finished {
             self.rx = None;
             self.current_dir = None;
+            save_cache(crate::storage::Storage::open_cache().as_ref(), &self.entries);
         }
+        self.finish_checks();
         egui::CentralPanel::default().frame(panel(BG, 28)).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
@@ -412,7 +469,7 @@ impl Environment {
                 ui.label(RichText::new(format!("{} installations", self.entries.len())).size(12.0).color(MUTED));
             });
             ui.add_space(8.0);
-            ui.label(RichText::new("PATH is inherited when VijiDeck starts. Searches are bounded and skip project dependencies and links.").size(11.0).color(MUTED));
+            ui.label(RichText::new("PATH is inherited when VijiDeck starts. Searches are bounded and skip project dependencies and links. Files found outside trusted install locations are not run until you approve them.").size(11.0).color(MUTED));
             ui.add_space(12.0);
             rule(ui);
             if self.rx.is_some() {
@@ -536,6 +593,11 @@ impl Environment {
                                                                 ui.close();
                                                             }
                                                         }
+                                                        if e.version == UNCHECKED
+                                                            && ui.button("Run to check version...").clicked() {
+                                                                self.run_confirmation = Some(e.path.clone());
+                                                                ui.close();
+                                                            }
                                                         if let Some(url) = release_url(e.name)
                                                             && ui.button("Official releases / downloads").clicked() {
                                                                 ui.ctx().open_url(egui::OpenUrl::new_tab(url));
@@ -583,6 +645,20 @@ impl Environment {
                     if ui.button(if add { "Add to user PATH" } else { "Remove from user PATH" }).clicked() {
                         self.path_notice = Some(match crate::environment_path::change(&dir, add) { Ok(message) => message, Err(error) => format!("PATH change failed: {error}") });
                         self.path_confirmation = None;
+                    }
+                });
+            });
+        }
+        if let Some(path) = self.run_confirmation.clone() {
+            egui::Window::new("Run unverified file?").collapsible(false).resizable(false).show(ctx, |ui| {
+                ui.label("This file was found outside trusted install locations, so VijiDeck has not run it. Checking its version runs it:");
+                ui.add(egui::Label::new(path.to_string_lossy()).selectable(true).wrap());
+                ui.label(RichText::new("Only continue if you know where this file came from. Files inside downloaded projects can run any code.").color(AMBER));
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() { self.run_confirmation = None; }
+                    if ui.button("Run and remember").clicked() {
+                        self.run_confirmation = None;
+                        self.approve(path);
                     }
                 });
             });
@@ -768,14 +844,164 @@ fn candidates(dir: &Path, exe: &str) -> Vec<PathBuf> {
         if p.is_file() { vec![p] } else { vec![] }
     }
 }
-fn collect(detector: &OriginDetector, progress: &mut impl FnMut(&Path)) -> Vec<Entry> {
-    let paths: Vec<PathBuf> = std::env::var_os("PATH")
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+fn path_dirs() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
         .map(|v| {
             std::env::split_paths(&v)
                 .filter(|p| p.is_absolute())
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+fn save_cache(store: Option<&crate::storage::Storage>, entries: &[Entry]) {
+    let value = serde_json::json!(
+        entries
+            .iter()
+            .map(|entry| serde_json::json!({"name": entry.name, "path": entry.path, "version": entry.version, "on_path": entry.on_path, "approved": entry.approved}))
+            .collect::<Vec<_>>()
+    );
+    if let Some(store) = store
+        && let Err(error) = store.save_cache("environment", &value)
+    {
+        eprintln!("Could not save environment cache: {error}");
+    }
+}
+/// Locations whose executables may be run automatically to read a version:
+/// PATH entries, well-known install directories, and administrator-owned trees.
+/// Anything else (for example a project folder under the home directory) needs
+/// explicit approval, because it may come from untrusted downloads.
+struct Trust {
+    dirs: Vec<PathBuf>,
+    trees: Vec<PathBuf>,
+}
+impl Trust {
+    fn new() -> Self {
+        Self {
+            dirs: path_dirs()
+                .iter()
+                .chain(common_dirs().iter())
+                .map(|d| canonical(d))
+                .collect(),
+            trees: trusted_roots().iter().map(|d| canonical(d)).collect(),
+        }
+    }
+    fn allows(&self, path: &Path) -> bool {
+        let path = canonical(path);
+        path.parent().is_some_and(|parent| self.dirs.iter().any(|d| d == parent))
+            || self.trees.iter().any(|tree| path.starts_with(tree))
+            || admin_only(&path)
+    }
+}
+/// On macOS and Linux, the equivalent of Program Files: the file and every
+/// directory above it are owned by root and not writable by group or others,
+/// so only an administrator could have placed it there. Checks the resolved
+/// path, so a symlink cannot borrow a trusted location.
+#[cfg(unix)]
+fn admin_only(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    path.is_absolute()
+        && path.ancestors().all(|p| {
+            std::fs::metadata(p).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
+        })
+}
+#[cfg(not(unix))]
+fn admin_only(_path: &Path) -> bool {
+    false
+}
+/// Deep-search roots that only administrators can write to.
+fn trusted_roots() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        ["ProgramFiles", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from)
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+/// Deep-search roots that users or other software may be able to write to.
+/// On macOS and Linux, files found here still run automatically when
+/// `admin_only` shows that only root could have written them.
+fn untrusted_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        roots.push(PathBuf::from(home));
+    }
+    if cfg!(windows) {
+        for var in ["LOCALAPPDATA", "ProgramData"] {
+            if let Some(value) = std::env::var_os(var) {
+                roots.push(PathBuf::from(value));
+            }
+        }
+    } else {
+        for root in ["/opt", "/usr/local", "/Library/Frameworks", "/Applications"] {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    roots
+}
+fn collect(
+    detector: &OriginDetector,
+    approvals: &std::collections::HashSet<PathBuf>,
+    progress: &mut impl FnMut(&Path),
+) -> Vec<Entry> {
+    let paths = path_dirs();
+    let common = common_dirs();
+
+    // Traverse each tree once and match filenames during enumeration, rather than
+    // probing every tool name in every directory.
+    let trusted = discover_candidates(&trusted_roots(), progress);
+    let untrusted = discover_candidates(&untrusted_roots(), progress);
+    let mut result = Vec::new();
+    for (index, spec) in TOOLS.iter().enumerate() {
+        let mut seen = std::collections::HashSet::new();
+        for (on_path, dirs) in [(true, &paths), (false, &common)] {
+            for dir in dirs {
+                progress(dir);
+                for path in candidates(dir, spec.exe) {
+                    if seen.insert(canonical(&path)) {
+                        result.push(Entry {
+                            name: spec.name,
+                            version: version(&path, spec.arg),
+                            origin: detector.classify(spec.name, &path),
+                            path,
+                            on_path,
+                            approved: false,
+                        });
+                    }
+                }
+            }
+        }
+        for (runnable, found) in [(true, &trusted), (false, &untrusted)] {
+            for path in &found[index] {
+                let key = canonical(path);
+                let runnable = runnable || admin_only(&key);
+                let approved = !runnable && approvals.contains(&key);
+                if seen.insert(key) {
+                    progress(path.parent().unwrap_or(path));
+                    result.push(Entry {
+                        name: spec.name,
+                        version: if runnable || approved {
+                            version(path, spec.arg)
+                        } else {
+                            UNCHECKED.into()
+                        },
+                        origin: detector.classify(spec.name, path),
+                        path: path.clone(),
+                        on_path: false,
+                        approved,
+                    });
+                }
+            }
+        }
+    }
+    result
+}
+fn common_dirs() -> Vec<PathBuf> {
     let mut common = Vec::new();
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
         let h = PathBuf::from(home);
@@ -820,65 +1046,7 @@ fn collect(detector: &OriginDetector, progress: &mut impl FnMut(&Path)) -> Vec<E
             common.push(PathBuf::from(p));
         }
     }
-    let mut roots = Vec::new();
-    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-        roots.push(PathBuf::from(home));
-    }
-    if cfg!(windows) {
-        for var in [
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "LOCALAPPDATA",
-            "ProgramData",
-        ] {
-            if let Some(value) = std::env::var_os(var) {
-                roots.push(PathBuf::from(value));
-            }
-        }
-    } else {
-        for root in ["/opt", "/usr/local", "/Library/Frameworks", "/Applications"] {
-            roots.push(PathBuf::from(root));
-        }
-    }
-
-    // Traverse each tree once and match filenames during enumeration, rather than
-    // probing every tool name in every directory.
-    let discovered = discover_candidates(&roots, progress);
-    let mut result = Vec::new();
-    for (index, spec) in TOOLS.iter().enumerate() {
-        let mut seen = std::collections::HashSet::new();
-        for (on_path, dirs) in [(true, &paths), (false, &common)] {
-            for dir in dirs {
-                progress(dir);
-                for path in candidates(dir, spec.exe) {
-                    let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                    if seen.insert(key) {
-                        result.push(Entry {
-                            name: spec.name,
-                            version: version(&path, spec.arg),
-                            origin: detector.classify(spec.name, &path),
-                            path,
-                            on_path,
-                        });
-                    }
-                }
-            }
-        }
-        for path in &discovered[index] {
-            let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            if seen.insert(key) {
-                progress(path.parent().unwrap_or(path));
-                result.push(Entry {
-                    name: spec.name,
-                    version: version(path, spec.arg),
-                    origin: detector.classify(spec.name, path),
-                    path: path.clone(),
-                    on_path: false,
-                });
-            }
-        }
-    }
-    result
+    common
 }
 
 // Enumerate each directory once and retain only matching executable names.
@@ -1015,6 +1183,7 @@ mod discovery_tests {
             on_path: true,
             version: version.into(),
             origin: Origin::Unknown,
+            approved: false,
         };
         let entries = vec![
             entry("Python", "Python 3.12.3"),
@@ -1049,6 +1218,7 @@ mod discovery_tests {
             on_path: false,
             version: "Python 3.12.3".into(),
             origin,
+            approved: false,
         };
         let entries = vec![
             entry(Origin::Bundled("Blender".into())),
@@ -1069,6 +1239,7 @@ mod discovery_tests {
             on_path: true,
             version: version.into(),
             origin: Origin::Unknown,
+            approved: false,
         };
         let pip = entry(
             "pip",
@@ -1111,5 +1282,26 @@ mod discovery_tests {
         assert!(found[python].contains(&nested.join(filename)));
         assert!(!found[python].contains(&skipped.join(filename)));
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+    #[test]
+    fn project_folders_are_not_trusted_for_automatic_execution() {
+        let root = std::env::temp_dir().join(format!("vijideck-trust-test-{}", std::process::id()));
+        let project = root.join("downloads").join("project").join("bin");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = project.join(if cfg!(windows) { "git.exe" } else { "git" });
+        std::fs::write(&file, "test").unwrap();
+        assert!(!Trust::new().allows(&file));
+        assert!(!admin_only(&canonical(&file)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn root_owned_system_files_are_admin_only() {
+        assert!(admin_only(&canonical(Path::new("/bin/sh"))));
     }
 }
