@@ -45,6 +45,12 @@ For visual QA with real local socket data, set `VIJIDECK_SCREENSHOT_TO` to a `.p
 Sources: [eframe](https://docs.rs/eframe/0.33.3/eframe/), [netstat2](https://docs.rs/netstat2/0.11.2/netstat2/), [sysinfo](https://docs.rs/sysinfo/0.37.2/sysinfo/).
 
 
+Service visual previews use `VIJIDECK_PREVIEW_VIEW=services-list`,
+`services-confirm`, or `services-empty` with `VIJIDECK_SCREENSHOT_TO` and the
+`ui-preview` feature. These use synthetic data and never execute service actions.
+Use `services` for read-only discovery from the host service manager. All service
+previews also support `VIJIDECK_PREVIEW_COMPACT=1`.
+
 ## License metadata
 
 Linux packages install AppStream metadata with a custom/proprietary license reference

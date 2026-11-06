@@ -8,6 +8,7 @@ pub(super) enum Tool {
     Processes,
     Environment,
     Docker,
+    Services,
 }
 
 impl Tool {
@@ -20,6 +21,7 @@ impl Tool {
             Self::Processes => "Processes",
             Self::Environment => "Developer environment",
             Self::Docker => "Docker",
+            Self::Services => "Services",
         }
     }
 }

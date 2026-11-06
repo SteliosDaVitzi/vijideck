@@ -86,6 +86,47 @@ CPU values need two samples and are per-core, so multithreaded processes can exc
 
 Process identity uses PID plus the OS-reported start timestamp, whose precision varies by platform. A successful signal request does not guarantee termination; the next scan shows whether sockets remain. A service supervisor may restart a killed process.
 
+## Services
+
+The **Services** rail icon opens the local service manager. Search matches names,
+identifiers, descriptions, state, startup mode, and configuration/command. State
+and startup filters work together. Select a service to inspect its identifier,
+scope, process ID (when available), and configuration. Hover or focus the icon
+buttons for their action names. Auto refresh runs every ten seconds; the refresh
+icon retries discovery immediately.
+
+- **Windows:** Lists installed services, including stopped and disabled services.
+  Start, stop, restart, pause, and resume depend on each service's capabilities.
+  Startup can be Automatic, Manual, or Disabled. Enable sets Automatic; Manual is
+  available in the inspector.
+- **Linux:** Requires systemd and `systemctl`. System and Current user query their
+  respective managers, combining installed service files with loaded/transient
+  units. Static, masked, generated, and template units retain their native startup
+  states; unsupported startup actions stay disabled. Uninstantiated templates
+  cannot be started. Pause/resume is unavailable.
+- **macOS:** System lists launch daemons; Current user lists the signed-in GUI
+  session's launch agents. Discovery includes standard Apple, local, and user
+  plist directories plus jobs loaded into the chosen domain. Start bootstraps an
+  unloaded configured job and kickstarts it. Stop unloads it from that domain;
+  it may load again at the next login or boot. Restart uses launchd's kickstart
+  restart. Enable/disable changes launchd's persistent override. Pause/resume is
+  unavailable. A stopped on-demand job is normal. If macOS changes its diagnostic
+  inventory format, discovery reports an error and actions remain unavailable.
+
+Startup changes do not immediately start or stop a service. Stop, restart, pause,
+and startup changes show a confirmation with the exact service and scope.
+VijiDeck re-reads the service before dispatching an action and rejects stale
+selections. Actions run in the background and refresh inventory afterward, even
+when the action fails. A timeout can leave completion uncertain; refresh and
+review the current state before retrying.
+
+System changes often require administrator/root privileges. Windows users can
+launch VijiDeck as administrator. Linux uses the current desktop's systemd
+authorization policy without a terminal password prompt. macOS system changes
+require a process with sufficient privileges. VijiDeck reports access errors;
+it does not silently elevate or force operations against protected services.
+Other applications and operating-system features can depend on these services.
+
 ## System logs
 
 Choose **Logs** in the tool rail to open recent operating system events.

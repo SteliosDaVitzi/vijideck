@@ -33,6 +33,7 @@ pub struct VijiDeck {
     logs: crate::logs_ui::Logs,
     environment: crate::environment::Environment,
     docker: crate::docker::Docker,
+    services: crate::services_ui::Services,
     tx: Sender<Command>,
     rx: Receiver<Event>,
     snapshot: Snapshot,
@@ -113,6 +114,7 @@ impl VijiDeck {
             logs: crate::logs_ui::Logs::new(),
             environment: crate::environment::Environment::new(),
             docker: crate::docker::Docker::new(),
+            services: crate::services_ui::Services::new(),
             tx,
             rx,
             snapshot,
@@ -156,6 +158,11 @@ impl VijiDeck {
                 Ok("processes") => self.active_tool = Tool::Processes,
                 Ok("environment") => self.active_tool = Tool::Environment,
                 Ok("docker") => self.active_tool = Tool::Docker,
+                Ok("services") => self.active_tool = Tool::Services,
+                Ok(view @ ("services-list" | "services-confirm" | "services-empty")) => {
+                    self.active_tool = Tool::Services;
+                    self.services.preview(view == "services-confirm", view == "services-empty");
+                }
                 Ok("logs") => self.active_tool = Tool::Logs,
                 Ok("logs-list") => {
                     self.active_tool = Tool::Logs;
@@ -236,6 +243,7 @@ impl VijiDeck {
             Tool::Processes => self.processes.preview_ready(),
             Tool::Overview => self.overview.preview_ready(),
             Tool::Logs => self.logs.preview_ready(),
+            Tool::Services => self.services.preview_ready(),
             _ => true,
         } || self.preview_started.elapsed() > Duration::from_secs(35);
         if !self.preview_requested
@@ -371,53 +379,62 @@ impl VijiDeck {
                     });
                     return;
                 }
-                ui.add_space(28.0);
+                let compact_rail = ui.available_height() < 600.0;
+                let rail_gap = if compact_rail { 0.0 } else { 14.0 };
+                ui.add_space(if compact_rail { 12.0 } else { 28.0 });
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if crate::overview::rail_icon(ui, self.active_tool == Tool::Overview).clicked() {
                         self.active_tool = Tool::Overview;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if port_icon(ui, self.active_tool == Tool::Ports).clicked() {
                         self.active_tool = Tool::Ports;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if cleanup_icon(ui, self.active_tool == Tool::Cleanup).clicked() {
                         self.active_tool = Tool::Cleanup;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if logs_icon(ui, self.active_tool == Tool::Logs).clicked() {
                         self.active_tool = Tool::Logs;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if tasks_icon(ui, self.active_tool == Tool::Processes).clicked() {
                         self.active_tool = Tool::Processes;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if environment_icon(ui, self.active_tool == Tool::Environment).clicked() {
                         self.active_tool = Tool::Environment;
                     }
                 });
-                ui.add_space(14.0);
+                ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     if docker_icon(ui, self.active_tool == Tool::Docker).clicked() {
                         self.active_tool = Tool::Docker;
+                    }
+                });
+                ui.add_space(rail_gap);
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if crate::services_ui::rail_icon(ui, self.active_tool == Tool::Services).clicked() {
+                        self.active_tool = Tool::Services;
                     }
                 });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -445,6 +462,8 @@ impl VijiDeck {
                     ui.label(
                         RichText::new(if self.active_tool == Tool::Docker {
                             self.docker.status()
+                        } else if self.active_tool == Tool::Services {
+                            self.services.status()
                         } else if self.active_tool == Tool::Environment {
                             self.environment.status()
                         } else if self.active_tool == Tool::Cleanup {
@@ -476,6 +495,8 @@ impl VijiDeck {
                         ui.label(
                             RichText::new(if self.active_tool == Tool::Docker {
                                 "Docker / refresh every 3 seconds".to_owned()
+                            } else if self.active_tool == Tool::Services {
+                                "Local services / startup & runtime".to_owned()
                             } else if self.active_tool == Tool::Environment {
                                 "Local environment".to_owned()
                             } else if self.active_tool == Tool::Cleanup {
@@ -532,6 +553,7 @@ impl eframe::App for VijiDeck {
         self.background.sync_window_size(ctx);
         if self.active_tool != Tool::Docker || self.background.compact { self.docker.close_logs(); }
         self.docker.poll();
+        self.services.poll();
         if let Some(cleanup) = &mut self.cleanup {
             cleanup.poll();
         }
@@ -583,6 +605,7 @@ impl eframe::App for VijiDeck {
         self.tool_rail(ctx);
         match self.active_tool {
             Tool::Docker => self.docker.show(ctx),
+            Tool::Services => self.services.show(ctx),
             Tool::Environment => self.environment.show(ctx),
             Tool::Processes => self.processes.show(ctx),
             Tool::Logs => self.logs.show(ctx),

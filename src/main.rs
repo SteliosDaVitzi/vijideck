@@ -22,6 +22,8 @@ mod logs_ui;
 mod overview;
 mod ports;
 mod processes;
+mod services;
+mod services_ui;
 mod storage;
 mod ui;
 mod volumes;

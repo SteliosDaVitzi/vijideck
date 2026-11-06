@@ -25,6 +25,7 @@ packages or an async runtime.
 | `processes.rs` | Process inventory, grouping, sorting, and process view |
 | `environment*.rs` | Tool discovery, installation provenance, icons, PATH, and environment editing |
 | `logs.rs` / `logs_ui.rs`, `logs_list.rs`, `logs_access.rs` | OS log providers / presentation and explicit access requests |
+| `services.rs`, `services/client/` / `services_ui.rs` | Service identities, capabilities and stale-state validation; bounded platform commands / service inventory, inspector and confirmations |
 | `storage.rs` | SQLite schema, preferences, and disposable discovery caches |
 | `ui.rs` | Shared presentation primitives |
 | `xtask` | Native packaging, separate from runtime code |

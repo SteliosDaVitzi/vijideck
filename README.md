@@ -10,6 +10,7 @@ A native desktop toolkit for keeping an eye on your machine and managing your de
 - **Disk cleanup:** Find recognized development dependencies, caches, and build output, then review selected folders before permanently deleting them.
 - **Docker:** Browse containers, Compose projects, images, and volumes. Start, stop, or remove containers, follow logs, and open a container shell through your desktop terminal.
 - **System logs:** Browse, filter, and inspect Windows event logs, Linux journals, or macOS unified logs.
+- **Services:** Browse configured Windows services, Linux systemd units, and macOS launchd jobs. Control runtime state and startup behavior with service-specific icon actions.
 
 VijiDeck runs as a native application, without a browser UI, webview, or application server. Preferences and discovery caches are stored locally in SQLite. Docker uses your configured Docker context, which may point to a remote daemon. See the [user guide](docs/user-guide.md) for behavior, permissions, data storage, and limitations.
 
