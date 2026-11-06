@@ -78,6 +78,86 @@ fn linked(meta: &fs::Metadata) -> bool {
     }
 }
 
+/// Whether two entries live on the same filesystem. On Unix this catches every
+/// mount crossing, including ones absent from any mount list. Windows volume
+/// mounts are reparse points and are already rejected by `linked`.
+fn same_device(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (a, b);
+        true
+    }
+}
+
+/// Every mount point the OS knows about. `sysinfo::Disks` filters out tmpfs,
+/// NFS, CIFS, and other virtual/network filesystems, so on Linux the kernel
+/// mount table is read directly.
+fn mount_points() -> HashSet<PathBuf> {
+    #[allow(unused_mut)]
+    let mut points: HashSet<PathBuf> = sysinfo::Disks::new_with_refreshed_list()
+        .list()
+        .iter()
+        .filter_map(|d| d.mount_point().canonicalize().ok())
+        .collect();
+    #[cfg(target_os = "linux")]
+    {
+        let table = fs::read("/proc/self/mountinfo")
+            .map(|t| (t, 4))
+            .or_else(|_| fs::read("/proc/mounts").map(|t| (t, 1)));
+        if let Ok((table, field)) = table {
+            points.extend(linux_mount_points(&table, field));
+        }
+    }
+    points
+}
+
+/// Mount points from a mountinfo (field 4) or /proc/mounts (field 1) table.
+/// Paths are octal-escaped (`\040` for space) and may not be UTF-8.
+#[cfg(target_os = "linux")]
+fn linux_mount_points(table: &[u8], field: usize) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    table
+        .split(|&b| b == b'\n')
+        .filter_map(|line| line.split(|&b| b == b' ').nth(field))
+        .filter(|raw| raw.first() == Some(&b'/'))
+        .map(|raw| {
+            let mut path = Vec::with_capacity(raw.len());
+            let mut i = 0;
+            while i < raw.len() {
+                let octal = raw.get(i + 1..i + 4).filter(|d| d.iter().all(|c| (b'0'..=b'7').contains(c)));
+                match octal {
+                    Some(d) if raw[i] == b'\\' => {
+                        path.push((d[0] - b'0') * 64 + (d[1] - b'0') * 8 + (d[2] - b'0'));
+                        i += 4;
+                    }
+                    _ => {
+                        path.push(raw[i]);
+                        i += 1;
+                    }
+                }
+            }
+            PathBuf::from(std::ffi::OsString::from_vec(path))
+        })
+        .collect()
+}
+
+/// Reject a path when it, or any ancestor below the scan root, is a mount point
+/// or sits on a different filesystem than the root.
+fn check_boundary(root: &Path, path: &Path, mounts: &HashSet<PathBuf>) -> io::Result<()> {
+    let root_meta = fs::symlink_metadata(root)?;
+    for ancestor in path.ancestors().take_while(|a| *a != root) {
+        if mounts.contains(ancestor) || !same_device(&root_meta, &fs::symlink_metadata(ancestor)?) {
+            return Err(io::Error::other("Path is on another mounted filesystem"));
+        }
+    }
+    Ok(())
+}
+
 fn stamp(meta: &fs::Metadata) -> Stamp {
     Stamp {
         directory: meta.is_dir(),
@@ -174,12 +254,9 @@ pub fn validate_cached(root: &Path, path: &Path, cancel: &AtomicBool) -> Option<
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     let (source, kind) = classify(path, &names)?;
-    let mounts = sysinfo::Disks::new_with_refreshed_list()
-        .list()
-        .iter()
-        .filter_map(|d| d.mount_point().canonicalize().ok())
-        .filter(|p| p != root)
-        .collect();
+    let mut mounts = mount_points();
+    mounts.remove(root);
+    check_boundary(root, path, &mounts).ok()?;
     let manifest = inventory(path, &mounts, cancel, &mut |_, _, _| {}).ok()?;
     let bytes = manifest.values().map(|s| s.len).sum();
     let files = manifest.values().filter(|s| !s.directory).count();
@@ -263,12 +340,11 @@ fn scan_with_workers(
         ready: Condvar::new(),
         result: Mutex::new(result),
         cancel,
-        mounts: disks
-            .list()
-            .iter()
-            .filter_map(|d| d.mount_point().canonicalize().ok())
-            .filter(|p| p != &root)
-            .collect(),
+        mounts: {
+            let mut mounts = mount_points();
+            mounts.remove(&root);
+            mounts
+        },
         reporter: Mutex::new((Instant::now(), update)),
         directories: AtomicUsize::new(0),
         files: AtomicUsize::new(0),
@@ -373,6 +449,14 @@ impl<F: FnMut(ScanUpdate) + Send> Engine<'_, F> {
         let mut part = Scan::default();
         let mut directories = Vec::new();
         let mut names = HashSet::new();
+        let dir_meta = match fs::symlink_metadata(&dir) {
+            Ok(meta) => meta,
+            Err(e) => {
+                note(&mut part, &dir, e);
+                self.merge(part);
+                return Vec::new();
+            }
+        };
         let children = match fs::read_dir(&dir) {
             Ok(children) => children,
             Err(e) => {
@@ -430,7 +514,9 @@ impl<F: FnMut(ScanUpdate) + Send> Engine<'_, F> {
                 continue;
             }
             match child.metadata() {
-                Ok(meta) if !linked(&meta) => directories.push((path, meta)),
+                Ok(meta) if !linked(&meta) && same_device(&dir_meta, &meta) => {
+                    directories.push((path, meta))
+                }
                 Ok(_) => part.skipped += 1,
                 Err(e) => note(&mut part, &path, e),
             }
@@ -515,6 +601,8 @@ fn inventory(
 ) -> io::Result<HashMap<PathBuf, Stamp>> {
     let mut manifest = HashMap::new();
     let mut pending = vec![PathBuf::new()];
+    // The candidate must share its parent's filesystem, and so must everything below it.
+    let device = fs::symlink_metadata(root.parent().unwrap_or(root))?;
     while let Some(relative) = pending.pop() {
         if cancel.load(Ordering::Relaxed) {
             return Err(io::Error::other("Scan cancelled"));
@@ -522,7 +610,11 @@ fn inventory(
         let dir = root.join(&relative);
         // Fresh directory checks retain link protection when queued paths change.
         let meta = fs::symlink_metadata(&dir)?;
-        if mounts.contains(&dir) || linked(&meta) || !meta.is_dir() {
+        if mounts.contains(&dir)
+            || linked(&meta)
+            || !meta.is_dir()
+            || !same_device(&device, &meta)
+        {
             return Err(io::Error::other(
                 "Contains a mount, link, reparse point, or special file; deletion disabled",
             ));
@@ -562,11 +654,8 @@ fn inventory(
 /// new files appearing after validation prevent directory removal.
 pub fn delete(root: &Path, candidates: &[Candidate]) -> DeleteReport {
     let mut report = DeleteReport::default();
-    let mounts = sysinfo::Disks::new_with_refreshed_list()
-        .list()
-        .iter()
-        .filter_map(|d| d.mount_point().canonicalize().ok())
-        .collect();
+    let mut mounts = mount_points();
+    mounts.remove(root);
     for candidate in candidates {
         match delete_one(root, candidate, &mounts) {
             Ok(bytes) => {
@@ -612,6 +701,7 @@ fn delete_one(root: &Path, candidate: &Candidate, mounts: &HashSet<PathBuf>) -> 
         return Err(io::Error::other("Incomplete scan"));
     }
     validate_path(root, &candidate.path)?;
+    check_boundary(root, &candidate.path, mounts)?;
     let current = inventory(
         &candidate.path,
         mounts,
@@ -824,6 +914,35 @@ mod tests {
         let mounts = HashSet::from([candidate.path.clone()]);
         assert!(delete_one(&result.root, candidate, &mounts).is_err());
         assert!(candidate.path.join("a.pyc").exists());
+    }
+    #[test]
+    fn mounts_between_root_and_candidate_are_blocked() {
+        let f = Fixture::new();
+        f.file("tmp/project/__pycache__/a.pyc", "123");
+        let result = f.scan();
+        assert_eq!(result.entries.len(), 1);
+        let candidate = &result.entries[0];
+        // An intermediate mount the scan did not know about (e.g. tmpfs at /tmp).
+        let mounts = HashSet::from([result.root.join("tmp")]);
+        assert!(delete_one(&result.root, candidate, &mounts).is_err());
+        assert!(candidate.path.join("a.pyc").exists());
+        assert!(check_boundary(&result.root, &candidate.path, &HashSet::new()).is_ok());
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_mount_table_includes_virtual_and_network_filesystems() {
+        let mountinfo = b"22 1 8:1 / / rw - ext4 /dev/sda1 rw\n\
+            30 22 0:30 / /tmp rw - tmpfs tmpfs rw\n\
+            31 22 0:31 / /mnt/my\\040share rw - cifs //host/share rw\n\
+            32 22 0:32 / /srv/nfs rw - nfs4 host:/export rw\n";
+        let points = linux_mount_points(mountinfo, 4);
+        for expected in ["/", "/tmp", "/mnt/my share", "/srv/nfs"] {
+            assert!(points.contains(&PathBuf::from(expected)), "{expected}");
+        }
+        let mounts = b"tmpfs /tmp tmpfs rw 0 0\n";
+        assert_eq!(linux_mount_points(mounts, 1), [PathBuf::from("/tmp")]);
+        // The live table must include anything the kernel reports, e.g. /proc.
+        assert!(mount_points().contains(Path::new("/proc")));
     }
     #[test]
     fn parallel_scan_matches_serial_and_streams_each_candidate_once() {
