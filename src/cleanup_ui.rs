@@ -70,6 +70,7 @@ pub struct Cleanup {
     cancel: Arc<AtomicBool>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
+    completion: Option<Receiver<Result<(), String>>>,
     progress: Progress,
     started: Option<Instant>,
     notice: Option<String>,
@@ -104,6 +105,7 @@ impl Cleanup {
             cancel: Arc::new(AtomicBool::new(false)),
             tx,
             rx,
+            completion: None,
             progress: Progress::default(),
             started: None,
             notice: None,
@@ -151,62 +153,57 @@ impl Cleanup {
         self.failures.clear();
         self.progress = Progress::default();
         self.needs_rescan = false;
-        if let Err(e) = std::thread::Builder::new()
-            .name("cleanup-scan".into())
-            .spawn(move || {
-                let store = crate::storage::Storage::open_cache();
-                if let Some(value) = store
-                    .as_ref()
-                    .and_then(|s| s.load_cache("cleanup").ok().flatten())
-                {
-                    let cached_root = value
-                        .get("root")
-                        .and_then(|v| serde_json::from_value::<PathBuf>(v.clone()).ok());
-                    if cached_root.as_ref() == Some(&root) {
-                        let paths = value
-                            .get("paths")
-                            .and_then(|v| serde_json::from_value::<Vec<PathBuf>>(v.clone()).ok())
-                            .unwrap_or_default();
-                        for path in paths {
-                            if cancel.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            if let Some(candidate) = cleanup::validate_cached(&root, &path, &cancel)
-                            {
-                                tx.send(Event::Update(ScanUpdate::Found(candidate))).ok();
-                                ctx.request_repaint();
-                            }
+        self.completion = Some(crate::worker::spawn(move || {
+            let store = crate::storage::Storage::open_cache();
+            if let Some(value) = store
+                .as_ref()
+                .and_then(|s| s.load_cache("cleanup").ok().flatten())
+            {
+                let cached_root = value
+                    .get("root")
+                    .and_then(|v| serde_json::from_value::<PathBuf>(v.clone()).ok());
+                if cached_root.as_ref() == Some(&root) {
+                    let paths = value
+                        .get("paths")
+                        .and_then(|v| serde_json::from_value::<Vec<PathBuf>>(v.clone()).ok())
+                        .unwrap_or_default();
+                    for path in paths {
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if let Some(candidate) = cleanup::validate_cached(&root, &path, &cancel) {
+                            tx.send(Event::Update(ScanUpdate::Found(candidate))).ok();
+                            ctx.request_repaint();
                         }
                     }
                 }
-                let scan = cleanup::scan(&root, &cancel, |update| {
-                    tx.send(Event::Update(update)).ok();
-                    ctx.request_repaint();
-                });
-                if !scan.cancelled && scan.visited > 0 {
-                    let paths: Vec<_> = scan
-                        .entries
-                        .iter()
-                        .filter(|e| e.issue.is_none())
-                        .map(|e| &e.path)
-                        .collect();
-                    let entries: Vec<_> = scan.entries.iter().filter(|e| e.issue.is_none()).map(|e| serde_json::json!({"path": e.path, "source": e.source, "kind": e.kind, "bytes": e.bytes, "files": e.files})).collect();
-                    if let (Some(store), Ok(value)) = (
-                        store,
-                        serde_json::to_value(serde_json::json!({"root": root, "paths": paths, "entries": entries})),
-                    ) && let Err(error) = store.save_cache("cleanup", &value)
-                    {
-                        eprintln!("Could not save cleanup cache: {error}");
-                    }
-                }
-                tx.send(Event::Scanned(scan)).ok();
+            }
+            let scan = cleanup::scan(&root, &cancel, |update| {
+                tx.send(Event::Update(update)).ok();
                 ctx.request_repaint();
-            })
-        {
-            self.busy = false;
-            self.started = None;
-            self.notice = Some(format!("Could not start scan: {e}"));
-        }
+            });
+            if !scan.cancelled && scan.visited > 0 {
+                let paths: Vec<_> = scan
+                    .entries
+                    .iter()
+                    .filter(|e| e.issue.is_none())
+                    .map(|e| &e.path)
+                    .collect();
+                let entries: Vec<_> = scan.entries.iter().filter(|e| e.issue.is_none()).map(|e| serde_json::json!({"path": e.path, "source": e.source, "kind": e.kind, "bytes": e.bytes, "files": e.files})).collect();
+                if let (Some(store), Ok(value)) = (
+                    store,
+                    serde_json::to_value(
+                        serde_json::json!({"root": root, "paths": paths, "entries": entries}),
+                    ),
+                ) && let Err(error) = store.save_cache("cleanup", &value)
+                {
+                    eprintln!("Could not save cleanup cache: {error}");
+                }
+            }
+            tx.send(Event::Scanned(scan)).ok();
+            ctx.request_repaint();
+            Ok(())
+        }));
     }
     fn start_delete(&mut self, ctx: &egui::Context) {
         let Some(scan) = &self.scan else {
@@ -227,18 +224,12 @@ impl Cleanup {
         self.busy = true;
         self.deleting = true;
         self.confirmation = false;
-        if let Err(e) = std::thread::Builder::new()
-            .name("cleanup-delete".into())
-            .spawn(move || {
-                tx.send(Event::Deleted(cleanup::delete(&root, &candidates)))
-                    .ok();
-                ctx.request_repaint();
-            })
-        {
-            self.busy = false;
-            self.deleting = false;
-            self.notice = Some(format!("Could not start deletion: {e}"));
-        }
+        self.completion = Some(crate::worker::spawn(move || {
+            tx.send(Event::Deleted(cleanup::delete(&root, &candidates)))
+                .ok();
+            ctx.request_repaint();
+            Ok(())
+        }));
     }
     pub fn poll(&mut self) {
         // Bound frame work when many small candidates arrive together.
@@ -293,6 +284,19 @@ impl Cleanup {
                     self.selected.clear();
                     self.dirty = true;
                 }
+            }
+        }
+        if let Some(result) = self.completion.as_ref().and_then(crate::worker::poll) {
+            self.completion = None;
+            if let Err(error) = result {
+                self.busy = false;
+                self.deleting = false;
+                self.started = None;
+                self.needs_rescan = true;
+                self.notice = Some(error);
+                while self.rx.try_recv().is_ok() {}
+                self.selected.clear();
+                self.confirmation = false;
             }
         }
     }
@@ -983,8 +987,9 @@ impl Cleanup {
                         if ui
                             .add_enabled(
                                 can_select && selectable > 0,
-                                egui::Checkbox::without_text(&mut all)
-                                    .indeterminate(visible_selected > 0 && visible_selected < selectable),
+                                egui::Checkbox::without_text(&mut all).indeterminate(
+                                    visible_selected > 0 && visible_selected < selectable,
+                                ),
                             )
                             .on_hover_text("Select or clear all visible folders")
                             .changed()
@@ -1603,6 +1608,20 @@ fn bytes(v: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_job_releases_busy_state_even_with_live_progress_sender() {
+        let mut view = Cleanup::new();
+        view.busy = true;
+        view.deleting = true;
+        view.confirmation = true;
+        let (tx, rx) = mpsc::channel();
+        view.completion = Some(rx);
+        tx.send(Err("fixture worker failed".into())).unwrap();
+        view.poll();
+        assert!(!view.busy && !view.deleting && !view.confirmation);
+        assert!(view.needs_rescan && view.completion.is_none());
+        assert_eq!(view.notice.as_deref(), Some("fixture worker failed"));
+    }
     #[test]
     fn live_search_and_selection_survive_final_result_reordering() {
         let target = std::env::current_dir().unwrap().join("target");

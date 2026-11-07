@@ -37,7 +37,6 @@ $key.Dispose()
 
 #[cfg(not(windows))]
 pub fn change(dir: &Path, add: bool) -> Result<String, String> {
-    use std::fs;
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
     let profile = std::path::PathBuf::from(home).join(".profile");
     let path = dir.to_str().ok_or("This path is not valid UTF-8")?;
@@ -46,35 +45,32 @@ pub fn change(dir: &Path, add: bool) -> Result<String, String> {
     }
     let quoted = format!("'{}'", path.replace('\'', "'\\''"));
     let marker = format!("export PATH={quoted}:\"$PATH\" # VijiDeck managed PATH");
-    let content = match fs::read_to_string(&profile) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    let present = content.lines().any(|line| line == marker);
-    if add && present {
-        return Err("This directory is already managed in ~/.profile.".into());
-    }
-    if !add && !present {
-        return Err("This directory is not managed by VijiDeck in ~/.profile. Remove it from its original configuration instead.".into());
-    }
-    let updated = if add {
-        format!(
-            "{}{}{}\n",
-            content,
-            if content.is_empty() || content.ends_with('\n') {
-                ""
-            } else {
-                "\n"
-            },
-            marker
-        )
-    } else {
-        content
-            .split_inclusive('\n')
-            .filter(|line| line.trim_end_matches(['\r', '\n']) != marker)
-            .collect::<String>()
-    };
-    fs::write(&profile, updated).map_err(|e| e.to_string())?;
+    crate::profile::update(&profile, |content| {
+        let present = content.lines().any(|line| line == marker);
+        if add && present {
+            return Err("This directory is already managed in ~/.profile.".into());
+        }
+        if !add && !present {
+            return Err("This directory is not managed by VijiDeck in ~/.profile. Remove it from its original configuration instead.".into());
+        }
+        let updated = if add {
+            format!(
+                "{}{}{}\n",
+                content,
+                if content.is_empty() || content.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                },
+                marker
+            )
+        } else {
+            content
+                .split_inclusive('\n')
+                .filter(|line| line.trim_end_matches(['\r', '\n']) != marker)
+                .collect::<String>()
+        };
+        Ok(updated)
+    })?;
     Ok("Updated ~/.profile. New login shells that read this file will use the change; graphical apps and other shells may use different configuration.".into())
 }

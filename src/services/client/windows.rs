@@ -65,6 +65,7 @@ fn parse(output: &str) -> Result<Vec<Service>, String> {
                 return Err("Service inventory contains an empty name.".into());
             }
             Ok(Service {
+                manager: crate::services::Manager::Windows,
                 id,
                 name: text("DisplayName"),
                 description: text("Description"),

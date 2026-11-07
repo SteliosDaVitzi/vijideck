@@ -10,9 +10,10 @@ mod docker_logs;
 mod docker_resources;
 mod docker_terminal;
 mod environment;
+mod environment_catalog;
 mod environment_icons;
 mod environment_origin;
-mod environment_path;
+mod environment_settings;
 mod environment_variables;
 mod gpu;
 mod logs;
@@ -21,17 +22,25 @@ mod logs_list;
 mod logs_ui;
 mod overview;
 mod ports;
+mod process_control;
 mod processes;
+#[cfg(not(windows))]
+mod profile;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod profile_metadata;
 mod services;
 mod services_ui;
 mod storage;
 mod ui;
 mod volumes;
+mod worker;
 
 fn main() -> eframe::Result {
-    let icon = image::load_from_memory(include_bytes!("../packaging/linux/icons/hicolor/64x64/apps/vijideck.png"))
-        .expect("embedded application icon is a valid PNG")
-        .to_rgba8();
+    let icon = image::load_from_memory(include_bytes!(
+        "../packaging/linux/icons/hicolor/64x64/apps/vijideck.png"
+    ))
+    .expect("embedded application icon is a valid PNG")
+    .to_rgba8();
     let (width, height) = icon.dimensions();
     eframe::run_native(
         "VijiDeck",

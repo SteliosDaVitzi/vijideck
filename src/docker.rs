@@ -5,27 +5,73 @@ use self::model::{Action, Container, Request, display_rows};
 use crate::ui::*;
 use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
-use std::{collections::HashSet, sync::mpsc::{self, Receiver}, time::{Duration, Instant}};
+use std::{
+    collections::HashSet,
+    sync::mpsc::{self, Receiver},
+    time::{Duration, Instant},
+};
 
-struct ResultEvent { snapshot: Result<Vec<Container>, String>, notice: Option<Result<String, String>> }
+struct ResultEvent {
+    snapshot: Result<Vec<Container>, String>,
+    notice: Option<Result<String, String>>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab { Containers, Images, Volumes }
+enum Tab {
+    Containers,
+    Images,
+    Volumes,
+}
 
 pub struct Docker {
     tab: Tab,
     images: crate::docker_resources::Resources,
     volumes: crate::docker_resources::Resources,
-    containers: Vec<Container>, rx: Option<Receiver<ResultEvent>>, scanned: bool,
-    last_scan: Instant, query: String, running_only: bool, auto: bool,
+    containers: Vec<Container>,
+    rx: Option<Receiver<ResultEvent>>,
+    scanned: bool,
+    last_scan: Instant,
+    query: String,
+    running_only: bool,
+    auto: bool,
     terminal_rx: Option<Receiver<Result<String, String>>>,
-    mutating: bool, pending: Option<Request>, expanded: HashSet<String>, logs: Option<crate::docker_logs::ContainerLogs>,
-    error: Option<String>, notice: Option<(String, bool)>, confirmation: Option<Request>,
+    mutating: bool,
+    pending: Option<Request>,
+    expanded: HashSet<String>,
+    logs: Option<crate::docker_logs::ContainerLogs>,
+    error: Option<String>,
+    notice: Option<(String, bool)>,
+    confirmation: Option<Request>,
 }
 impl Docker {
-    pub fn new() -> Self { Self { tab: Tab::Containers, images: crate::docker_resources::Resources::new(crate::docker_resources::Kind::Images), volumes: crate::docker_resources::Resources::new(crate::docker_resources::Kind::Volumes), terminal_rx: None, mutating: false, pending: None, expanded: HashSet::new(), logs: None, containers: Vec::new(), rx: None, scanned: false, last_scan: Instant::now(), query: String::new(), running_only: false, auto: true, error: None, notice: None, confirmation: None } }
+    pub fn new() -> Self {
+        Self {
+            tab: Tab::Containers,
+            images: crate::docker_resources::Resources::new(crate::docker_resources::Kind::Images),
+            volumes: crate::docker_resources::Resources::new(
+                crate::docker_resources::Kind::Volumes,
+            ),
+            terminal_rx: None,
+            mutating: false,
+            pending: None,
+            expanded: HashSet::new(),
+            logs: None,
+            containers: Vec::new(),
+            rx: None,
+            scanned: false,
+            last_scan: Instant::now(),
+            query: String::new(),
+            running_only: false,
+            auto: true,
+            error: None,
+            notice: None,
+            confirmation: None,
+        }
+    }
     pub fn status(&self) -> &str {
-        if self.mutating { return "Applying Docker action…"; }
+        if self.mutating {
+            return "Applying Docker action…";
+        }
         match self.tab {
             Tab::Images => self.images.status(),
             Tab::Volumes => self.volumes.status(),
@@ -35,36 +81,89 @@ impl Docker {
     }
     fn launch(&mut self, ctx: &egui::Context, request: Option<Request>) {
         if self.rx.is_some() {
-            if request.is_some() { self.pending = request; self.mutating = true; }
+            if request.is_some() {
+                self.pending = request;
+                self.mutating = true;
+            }
             return;
         }
         self.mutating = request.is_some();
-        let (tx, rx) = mpsc::channel(); self.rx = Some(rx);
+        let (tx, rx) = mpsc::channel();
+        self.rx = Some(rx);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let notice = request.map(|request| client::apply(&request));
             let snapshot = client::inventory();
-            tx.send(ResultEvent { snapshot, notice }).ok(); ctx.request_repaint();
+            tx.send(ResultEvent { snapshot, notice }).ok();
+            ctx.request_repaint();
         });
     }
     pub fn poll(&mut self) {
-        if let Some(rx) = &self.terminal_rx && let Ok(result) = rx.try_recv() {
+        if let Some(result) = self.terminal_rx.as_ref().and_then(crate::worker::poll) {
             self.terminal_rx = None;
-            self.notice = Some(match result { Ok(text) => (text, false), Err(text) => (text, true) });
+            self.notice = Some(match result {
+                Ok(text) => (text, false),
+                Err(text) => (text, true),
+            });
         }
-        if let Some(rx) = &self.rx && let Ok(event) = rx.try_recv() {
-            self.rx = None; self.mutating = self.pending.is_some(); self.scanned = true; self.last_scan = Instant::now();
-            match event.snapshot { Ok(containers) => { if self.containers != containers { self.containers = containers; } self.error = None; }, Err(e) => self.error = Some(e) }
-            if let Some(notice) = event.notice { self.notice = Some(match notice { Ok(s) => (s, false), Err(e) => (format!("Docker action failed (some containers may have changed): {e}"), true) }); }
+        if let Some(result) = self.rx.as_ref().and_then(crate::worker::receive) {
+            self.rx = None;
+            let event = match result {
+                Ok(event) => event,
+                Err(error) => {
+                    self.mutating = false;
+                    self.pending = None;
+                    self.scanned = true;
+                    self.last_scan = Instant::now();
+                    self.error = Some(error);
+                    return;
+                }
+            };
+            self.mutating = self.pending.is_some();
+            self.scanned = true;
+            self.last_scan = Instant::now();
+            match event.snapshot {
+                Ok(containers) => {
+                    if self.containers != containers {
+                        self.containers = containers;
+                    }
+                    self.error = None;
+                }
+                Err(e) => self.error = Some(e),
+            }
+            if let Some(notice) = event.notice {
+                self.notice = Some(match notice {
+                    Ok(s) => (s, false),
+                    Err(e) => (
+                        format!("Docker action failed (some containers may have changed): {e}"),
+                        true,
+                    ),
+                });
+            }
         }
     }
-    pub fn close_logs(&mut self) { self.logs = None; }
+    pub fn close_logs(&mut self) {
+        self.logs = None;
+    }
     pub fn show(&mut self, ctx: &egui::Context) {
         self.poll();
-        if self.rx.is_none() && let Some(request) = self.pending.take() { self.launch(ctx, Some(request)); }
-        if self.tab == Tab::Containers && (!self.scanned || (self.auto && self.confirmation.is_none() && self.last_scan.elapsed() >= Duration::from_secs(3))) { self.launch(ctx, None); }
+        if self.rx.is_none()
+            && let Some(request) = self.pending.take()
+        {
+            self.launch(ctx, Some(request));
+        }
+        if self.tab == Tab::Containers
+            && (!self.scanned
+                || (self.auto
+                    && self.confirmation.is_none()
+                    && self.last_scan.elapsed() >= Duration::from_secs(3)))
+        {
+            self.launch(ctx, None);
+        }
         let close = self.logs.as_mut().is_some_and(|logs| logs.show(ctx));
-        if close { self.close_logs(); }
+        if close {
+            self.close_logs();
+        }
         let mut request = None;
         let mut open_logs = None;
         let mut open_terminal = None;
@@ -199,11 +298,18 @@ impl Docker {
             });
         }
         if let Some(c) = open_logs {
-            self.logs = Some(crate::docker_logs::ContainerLogs::new(c.id, c.name, ctx.clone()));
+            self.logs = Some(crate::docker_logs::ContainerLogs::new(
+                c.id,
+                c.name,
+                ctx.clone(),
+            ));
         }
         if let Some(request) = request {
-            if request.action == Action::Delete { self.confirmation = Some(request); }
-            else { self.launch(ctx, Some(request)); }
+            if request.action == Action::Delete {
+                self.confirmation = Some(request);
+            } else {
+                self.launch(ctx, Some(request));
+            }
         }
         if let Some(request) = self.confirmation.clone() {
             egui::Modal::new(egui::Id::new("docker-delete")).show(ctx, |ui| {
@@ -221,33 +327,96 @@ impl Docker {
 }
 // Use egui's built-in disclosure painter, which does not depend on font glyph coverage.
 fn compose_toggle(ui: &mut egui::Ui, expanded: bool) -> egui::Response {
-    let response = ui.add(egui::Button::new("").frame(false).min_size(egui::vec2(22.0, 28.0)))
-        .on_hover_text(if expanded { "Collapse project" } else { "Expand project" });
+    let response = ui
+        .add(
+            egui::Button::new("")
+                .frame(false)
+                .min_size(egui::vec2(22.0, 28.0)),
+        )
+        .on_hover_text(if expanded {
+            "Collapse project"
+        } else {
+            "Expand project"
+        });
     let mut icon_response = response.clone();
-    icon_response.rect = egui::Rect::from_center_size(response.rect.center(), egui::vec2(12.0, 12.0));
-    egui::collapsing_header::paint_default_icon(ui, if expanded { 1.0 } else { 0.0 }, &icon_response);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, if expanded { "Collapse project" } else { "Expand project" }));
+    icon_response.rect =
+        egui::Rect::from_center_size(response.rect.center(), egui::vec2(12.0, 12.0));
+    egui::collapsing_header::paint_default_icon(
+        ui,
+        if expanded { 1.0 } else { 0.0 },
+        &icon_response,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            if expanded {
+                "Collapse project"
+            } else {
+                "Expand project"
+            },
+        )
+    });
     response
 }
 
 // These symbols ship in egui's default font set; no custom icon artwork.
-fn action_icon(ui: &mut egui::Ui, icon: &str, label: &str, color: egui::Color32, enabled: bool) -> egui::Response {
+fn action_icon(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    color: egui::Color32,
+    enabled: bool,
+) -> egui::Response {
     let text = RichText::new(icon).size(16.0).color(color);
     let text = if icon == ">_" { text.monospace() } else { text };
     let response = ui
-        .add_enabled(enabled, egui::Button::new(text).min_size(egui::vec2(30.0, 30.0)))
+        .add_enabled(
+            enabled,
+            egui::Button::new(text).min_size(egui::vec2(30.0, 30.0)),
+        )
         .on_hover_text(label)
         .on_disabled_hover_text(label);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     response
 }
 
-fn actions(ui: &mut egui::Ui, name: &str, containers: &[Container], busy: bool, request: &mut Option<Request>) {
+fn actions(
+    ui: &mut egui::Ui,
+    name: &str,
+    containers: &[Container],
+    busy: bool,
+    request: &mut Option<Request>,
+) {
     for action in [Action::Start, Action::Stop, Action::Delete] {
-        let targets: Vec<_> = containers.iter().filter(|c| match action { Action::Start => c.startable(), Action::Stop => c.active(), Action::Delete => true }).cloned().collect();
-        let icon = match action { Action::Start => "▶", Action::Stop => "■", Action::Delete => "🗑" };
-        if action_icon(ui, icon, action.label(), if action == Action::Delete { RED } else { CYAN }, !busy && !targets.is_empty()).clicked() {
-            *request = Some(Request { action, name: name.into(), containers: targets });
+        let targets: Vec<_> = containers
+            .iter()
+            .filter(|c| match action {
+                Action::Start => c.startable(),
+                Action::Stop => c.active(),
+                Action::Delete => true,
+            })
+            .cloned()
+            .collect();
+        let icon = match action {
+            Action::Start => "▶",
+            Action::Stop => "■",
+            Action::Delete => "🗑",
+        };
+        if action_icon(
+            ui,
+            icon,
+            action.label(),
+            if action == Action::Delete { RED } else { CYAN },
+            !busy && !targets.is_empty(),
+        )
+        .clicked()
+        {
+            *request = Some(Request {
+                action,
+                name: name.into(),
+                containers: targets,
+            });
         }
     }
 }
@@ -257,16 +426,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disconnected_workers_release_mutation_and_terminal_state() {
+        let mut view = Docker::new();
+        let (tx, rx) = mpsc::channel();
+        view.rx = Some(rx);
+        view.mutating = true;
+        drop(tx);
+        let (tx, rx) = mpsc::channel();
+        view.terminal_rx = Some(rx);
+        drop(tx);
+        view.poll();
+        assert!(view.rx.is_none() && view.terminal_rx.is_none());
+        assert!(!view.mutating && view.error.is_some() && view.notice.is_some());
+    }
+    #[test]
     fn layout_renders_at_minimum_and_full_width() {
         for width in [760.0, 1200.0] {
             let ctx = egui::Context::default();
             let mut docker = Docker::new();
             docker.scanned = true;
             docker.auto = false;
-            docker.containers.push(Container { id: "a".repeat(64), name: "web".into(), image: "nginx".into(), state: "running".into(), status: "Up 2 hours".into(), ports: "8080->80/tcp".into(), project: "shop".into(), service: "web".into() });
+            docker.containers.push(Container {
+                id: "a".repeat(64),
+                name: "web".into(),
+                image: "nginx".into(),
+                state: "running".into(),
+                status: "Up 2 hours".into(),
+                ports: "8080->80/tcp".into(),
+                project: "shop".into(),
+                service: "web".into(),
+            });
             docker.expanded.insert("shop".into());
             for _ in 0..3 {
-                let output = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 450.0))), ..Default::default() }, |ctx| docker.show(ctx));
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 450.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| docker.show(ctx),
+                );
                 assert!(!output.shapes.is_empty());
             }
         }
@@ -280,9 +481,20 @@ mod tests {
         docker.scanned = true;
         docker.auto = false;
         let render = |docker: &mut Docker| {
-            ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 580.0))), ..Default::default() }, |ctx| docker.show(ctx))
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 580.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| docker.show(ctx),
+            )
         };
-        for _ in 0..3 { render(&mut docker); }
+        for _ in 0..3 {
+            render(&mut docker);
+        }
         let before = render(&mut docker);
         let (_sender, receiver) = mpsc::channel();
         docker.rx = Some(receiver);
@@ -290,8 +502,16 @@ mod tests {
         let before = format!("{:?}", before.shapes);
         let during = format!("{:?}", during.shapes);
         if before != during {
-            let index = before.bytes().zip(during.bytes()).position(|(a, b)| a != b).unwrap_or(0);
-            panic!("refresh shape differs near byte {index}: before {:?}, during {:?}", &before[index.saturating_sub(40)..(index+100).min(before.len())], &during[index.saturating_sub(40)..(index+100).min(during.len())]);
+            let index = before
+                .bytes()
+                .zip(during.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
+            panic!(
+                "refresh shape differs near byte {index}: before {:?}, during {:?}",
+                &before[index.saturating_sub(40)..(index + 100).min(before.len())],
+                &during[index.saturating_sub(40)..(index + 100).min(during.len())]
+            );
         }
     }
     #[test]
@@ -301,18 +521,29 @@ mod tests {
         let mut expanded = false;
         let mut rect = egui::Rect::NOTHING;
         let mut render = |events: Vec<egui::Event>| {
-            ctx.run(egui::RawInput { events, ..Default::default() }, |ctx| {
-                ctx.fonts_mut(|fonts| {
-                    for icon in ['▶', '■', '🗑', '>', '_'] {
-                        assert!(fonts.has_glyph(&egui::FontId::proportional(16.0), icon), "Missing action icon: {icon}");
-                    }
-                });
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let response = compose_toggle(ui, expanded);
-                    rect = response.rect;
-                    if response.clicked() { expanded = !expanded; }
-                });
-            })
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    ctx.fonts_mut(|fonts| {
+                        for icon in ['▶', '■', '🗑', '>', '_'] {
+                            assert!(
+                                fonts.has_glyph(&egui::FontId::proportional(16.0), icon),
+                                "Missing action icon: {icon}"
+                            );
+                        }
+                    });
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let response = compose_toggle(ui, expanded);
+                        rect = response.rect;
+                        if response.clicked() {
+                            expanded = !expanded;
+                        }
+                    });
+                },
+            )
         };
         let output = render(Vec::new());
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Path(path) if path.points.len() == 3)), "Disclosure arrow must be painted independently of fonts");
@@ -320,11 +551,27 @@ mod tests {
         drop(render);
         let point = rect.center();
         for pressed in [true, false] {
-            let _ = ctx.run(egui::RawInput { events: vec![egui::Event::PointerMoved(point), egui::Event::PointerButton { pos: point, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }], ..Default::default() }, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    if compose_toggle(ui, expanded).clicked() { expanded = !expanded; }
-                });
-            });
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if compose_toggle(ui, expanded).clicked() {
+                            expanded = !expanded;
+                        }
+                    });
+                },
+            );
         }
         assert!(expanded);
     }
@@ -339,24 +586,54 @@ mod tests {
         docker.query = "web".into();
         docker.running_only = true;
         docker.expanded.insert("shop".into());
-        docker.images = Resources::fixture(Kind::Images, r#"{"Repository":"postgres","Tag":"17","ID":"sha256:abc","CreatedAt":"2026-01-01","Size":"100MB"}"#);
-        docker.volumes = Resources::fixture(Kind::Volumes, r#"{"Name":"db-data","Driver":"local","Scope":"local","Mountpoint":"/data"}"#);
+        docker.images = Resources::fixture(
+            Kind::Images,
+            r#"{"Repository":"postgres","Tag":"17","ID":"sha256:abc","CreatedAt":"2026-01-01","Size":"100MB"}"#,
+        );
+        docker.volumes = Resources::fixture(
+            Kind::Volumes,
+            r#"{"Name":"db-data","Driver":"local","Scope":"local","Mountpoint":"/data"}"#,
+        );
         let frame = |events| egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 650.0))),
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 650.0),
+            )),
             events,
             ..Default::default()
         };
-        for (label, tab, expected) in [("Images", Tab::Images, "postgres"), ("Volumes", Tab::Volumes, "db-data"), ("Containers", Tab::Containers, "Running only")] {
+        for (label, tab, expected) in [
+            ("Images", Tab::Images, "postgres"),
+            ("Volumes", Tab::Volumes, "db-data"),
+            ("Containers", Tab::Containers, "Running only"),
+        ] {
             let output = ctx.run(frame(vec![]), |ctx| docker.show(ctx));
-            let pos = output.shapes.iter().find_map(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape && text.galley.text() == label {
-                    Some(text.pos + text.galley.size() * 0.5)
-                } else { None }
-            }).expect("tab label");
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text() == label
+                    {
+                        Some(text.pos + text.galley.size() * 0.5)
+                    } else {
+                        None
+                    }
+                })
+                .expect("tab label");
             for pressed in [true, false] {
-                let _ = ctx.run(frame(vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton {
-                    pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
-                }]), |ctx| docker.show(ctx));
+                let _ = ctx.run(
+                    frame(vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]),
+                    |ctx| docker.show(ctx),
+                );
             }
             assert_eq!(docker.tab, tab);
             let output = ctx.run(frame(vec![]), |ctx| docker.show(ctx));
@@ -369,5 +646,4 @@ mod tests {
         assert!(docker.running_only);
         assert!(docker.expanded.contains("shop"));
     }
-
 }

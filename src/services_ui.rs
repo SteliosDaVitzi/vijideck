@@ -278,20 +278,22 @@ impl Services {
                     .services
                     .iter()
                     .filter(|service| {
-                        let state = ["", "Running", "Stopped", "Paused", "Failed"][self.state];
                         let state_match = self.state == 0
-                            || service.state == state
-                            || (self.state == 2 && service.state == "Not loaded");
+                            || service.runtime()
+                                == [
+                                    services::RuntimeState::Other,
+                                    services::RuntimeState::Running,
+                                    services::RuntimeState::Stopped,
+                                    services::RuntimeState::Paused,
+                                    services::RuntimeState::Failed,
+                                ][self.state];
                         let startup_match = match self.startup {
-                            1 => matches!(
-                                service.startup.as_str(),
-                                "Automatic" | "Enabled" | "enabled" | "enabled-runtime"
-                            ),
+                            1 => service.startup_mode() == services::StartupMode::Enabled,
                             2 => matches!(
-                                service.startup.as_str(),
-                                "Disabled" | "disabled" | "masked" | "masked-runtime"
+                                service.startup_mode(),
+                                services::StartupMode::Disabled | services::StartupMode::Masked
                             ),
-                            3 => service.startup == "Manual",
+                            3 => service.startup_mode() == services::StartupMode::Manual,
                             _ => true,
                         };
                         state_match && startup_match && service.matches(&query)
@@ -383,12 +385,16 @@ impl Services {
                                     };
                                     for action in [Action::Start, Action::Stop, Action::Restart]
                                         .into_iter()
-                                        .chain(if cfg!(windows) {
-                                            Some(if service.state == "Paused" {
-                                                Action::Resume
-                                            } else {
-                                                Action::Pause
-                                            })
+                                        .chain(if service.manager.supports(Action::Pause) {
+                                            Some(
+                                                if service.runtime()
+                                                    == services::RuntimeState::Paused
+                                                {
+                                                    Action::Resume
+                                                } else {
+                                                    Action::Pause
+                                                },
+                                            )
                                         } else {
                                             None
                                         })
@@ -439,9 +445,7 @@ impl Services {
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for action in Action::ALL {
-                if matches!(action, Action::Pause | Action::Resume | Action::Manual)
-                    && !cfg!(windows)
-                {
+                if !service.manager.supports(action) {
                     continue;
                 }
                 if action_button(ui, service, action, !busy).clicked() {
@@ -510,6 +514,7 @@ impl Services {
         } else {
             (0..36)
                 .map(|i| Service {
+                    manager: services::Manager::native(),
                     id: format!("vijideck.sample.{i:02}"),
                     name: [
                         "Application worker",
@@ -553,10 +558,10 @@ impl Services {
 }
 
 fn state_color(service: &Service) -> egui::Color32 {
-    match service.state.as_str() {
-        "Running" => CYAN,
-        "Failed" => RED,
-        "Paused" => AMBER,
+    match service.runtime() {
+        services::RuntimeState::Running => CYAN,
+        services::RuntimeState::Failed => RED,
+        services::RuntimeState::Paused => AMBER,
         _ => MUTED,
     }
 }
@@ -755,6 +760,7 @@ mod tests {
     fn interrupting_actions_wait_for_confirmation() {
         let mut view = Services::new();
         let service = Service {
+            manager: services::Manager::native(),
             id: "fixture.service".into(),
             name: "Disposable fixture".into(),
             description: String::new(),

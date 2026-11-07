@@ -17,8 +17,46 @@ impl Scope {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Manager {
+    Systemd,
+    Launchd,
+    Windows,
+}
+impl Manager {
+    pub fn supports(self, action: Action) -> bool {
+        self == Self::Windows || !matches!(action, Action::Pause | Action::Resume | Action::Manual)
+    }
+    pub fn native() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::Launchd
+        } else {
+            Self::Systemd
+        }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeState {
+    Running,
+    Stopped,
+    Paused,
+    Failed,
+    Active,
+    Other,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StartupMode {
+    Enabled,
+    Disabled,
+    Manual,
+    Masked,
+    Other,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Service {
+    pub manager: Manager,
     pub id: String,
     pub name: String,
     pub description: String,
@@ -32,36 +70,56 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn running(&self) -> bool {
-        self.state == "Running"
+    pub fn runtime(&self) -> RuntimeState {
+        match self.state.as_str() {
+            "Running" => RuntimeState::Running,
+            "Stopped" | "Not loaded" => RuntimeState::Stopped,
+            "Paused" => RuntimeState::Paused,
+            "Failed" => RuntimeState::Failed,
+            state if state.starts_with("active /") => RuntimeState::Active,
+            _ => RuntimeState::Other,
+        }
     }
-
+    pub fn startup_mode(&self) -> StartupMode {
+        match self.startup.as_str() {
+            "Automatic" | "Enabled" | "enabled" | "enabled-runtime" => StartupMode::Enabled,
+            "Disabled" | "disabled" => StartupMode::Disabled,
+            "Manual" => StartupMode::Manual,
+            "masked" | "masked-runtime" => StartupMode::Masked,
+            _ => StartupMode::Other,
+        }
+    }
+    pub fn running(&self) -> bool {
+        self.runtime() == RuntimeState::Running
+    }
     pub fn allows(&self, action: Action) -> bool {
-        let idle = matches!(self.state.as_str(), "Stopped" | "Failed" | "Not loaded");
+        if !self.manager.supports(action) {
+            return false;
+        }
+        let state = self.runtime();
+        let startup = self.startup_mode();
         match action {
             Action::Start => {
-                idle && !matches!(
-                    self.startup.as_str(),
-                    "Disabled" | "masked" | "masked-runtime"
-                ) && !self.id.contains("@.service")
+                matches!(state, RuntimeState::Stopped | RuntimeState::Failed)
+                    && startup != StartupMode::Masked
+                    && (startup != StartupMode::Disabled || self.manager == Manager::Systemd)
+                    && !self.id.contains("@.service")
             }
             Action::Stop => {
                 self.can_stop
-                    && (self.running()
-                        || self.state == "Paused"
-                        || self.state.starts_with("active /"))
+                    && matches!(
+                        state,
+                        RuntimeState::Running | RuntimeState::Paused | RuntimeState::Active
+                    )
             }
             Action::Restart => {
-                self.can_stop && (self.running() || self.state.starts_with("active /"))
+                self.can_stop && matches!(state, RuntimeState::Running | RuntimeState::Active)
             }
             Action::Pause => self.can_pause && self.running(),
-            Action::Resume => self.can_pause && self.state == "Paused",
-            Action::Enable => matches!(self.startup.as_str(), "Disabled" | "Manual" | "disabled"),
-            Action::Disable => matches!(
-                self.startup.as_str(),
-                "Automatic" | "Manual" | "Enabled" | "enabled" | "enabled-runtime"
-            ),
-            Action::Manual => matches!(self.startup.as_str(), "Automatic" | "Disabled"),
+            Action::Resume => self.can_pause && state == RuntimeState::Paused,
+            Action::Enable => matches!(startup, StartupMode::Disabled | StartupMode::Manual),
+            Action::Disable => matches!(startup, StartupMode::Enabled | StartupMode::Manual),
+            Action::Manual => matches!(startup, StartupMode::Enabled | StartupMode::Disabled),
         }
     }
 
@@ -178,6 +236,7 @@ mod tests {
 
     pub(super) fn fixture() -> Service {
         Service {
+            manager: Manager::Windows,
             id: "vijideck-fixture".into(),
             name: "Disposable service".into(),
             description: "Fixture only".into(),
@@ -191,6 +250,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn capabilities_follow_manager_semantics() {
+        let mut service = fixture();
+        service.state = "Stopped".into();
+        service.startup = "Disabled".into();
+        service.manager = Manager::Launchd;
+        assert!(!service.allows(Action::Manual));
+        assert!(!service.allows(Action::Start));
+        assert!(!service.allows(Action::Pause));
+        service.manager = Manager::Windows;
+        assert!(service.allows(Action::Manual));
+        assert!(!service.allows(Action::Start));
+        service.manager = Manager::Systemd;
+        service.startup = "disabled".into();
+        assert!(service.allows(Action::Start));
+        for startup in ["masked", "masked-runtime"] {
+            service.startup = startup.into();
+            assert!(!service.allows(Action::Start));
+        }
+        service.state = "unexpected".into();
+        assert!(!service.allows(Action::Stop));
+    }
     #[test]
     fn rejects_stale_missing_and_unsupported_targets() {
         let service = fixture();
@@ -219,6 +300,7 @@ mod tests {
         assert!(!service.allows(Action::Disable));
         service.state = "Stopped".into();
         assert!(!service.allows(Action::Start));
+        service.manager = Manager::Systemd;
         service.startup = "static".into();
         assert!(service.allows(Action::Start));
         assert!(!service.allows(Action::Enable));
@@ -227,6 +309,7 @@ mod tests {
         assert!(service.matches("fixture"));
         service.state = "active / exited".into();
         assert!(service.allows(Action::Stop));
+        service.manager = Manager::Windows;
         service.state = "Paused".into();
         service.can_pause = true;
         assert!(service.allows(Action::Resume));

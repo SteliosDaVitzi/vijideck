@@ -81,6 +81,7 @@ fn parse(plists: &str, domain: &str, overrides: &str) -> Result<Vec<Service>, St
         services.insert(
             id.to_string(),
             Service {
+                manager: crate::services::Manager::Launchd,
                 id: id.into(),
                 name: id.into(),
                 description: row["program"].as_str().unwrap_or_default().into(),
@@ -144,6 +145,7 @@ fn parse(plists: &str, domain: &str, overrides: &str) -> Result<Vec<Service>, St
         }
         let id = fields[2];
         let service = services.entry(id.into()).or_insert_with(|| Service {
+            manager: crate::services::Manager::Launchd,
             id: id.into(),
             name: id.into(),
             description: "Loaded launchd job; no standard plist found".into(),

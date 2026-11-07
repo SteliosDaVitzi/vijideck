@@ -6,11 +6,11 @@ use crate::{
     ui::*,
 };
 use eframe::egui::{self, RichText, Stroke};
-use tool::Tool;
 use std::{
     sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
 };
+use tool::Tool;
 
 enum Command {
     Scan,
@@ -154,14 +154,17 @@ impl VijiDeck {
         #[cfg(feature = "ui-preview")]
         if std::env::var_os("VIJIDECK_SCREENSHOT_TO").is_some() {
             match std::env::var("VIJIDECK_PREVIEW_VIEW").as_deref() {
-                Ok("overview" | "overview-hardware" | "widget") => self.active_tool = Tool::Overview,
+                Ok("overview" | "overview-hardware" | "widget") => {
+                    self.active_tool = Tool::Overview
+                }
                 Ok("processes") => self.active_tool = Tool::Processes,
                 Ok("environment") => self.active_tool = Tool::Environment,
                 Ok("docker") => self.active_tool = Tool::Docker,
                 Ok("services") => self.active_tool = Tool::Services,
                 Ok(view @ ("services-list" | "services-confirm" | "services-empty")) => {
                     self.active_tool = Tool::Services;
-                    self.services.preview(view == "services-confirm", view == "services-empty");
+                    self.services
+                        .preview(view == "services-confirm", view == "services-empty");
                 }
                 Ok("logs") => self.active_tool = Tool::Logs,
                 Ok("logs-list") => {
@@ -176,7 +179,9 @@ impl VijiDeck {
                     | "cleanup-filters",
                 ) => {
                     self.active_tool = Tool::Cleanup;
-                    self.cleanup.get_or_insert_with(crate::cleanup_ui::Cleanup::new).preview();
+                    self.cleanup
+                        .get_or_insert_with(crate::cleanup_ui::Cleanup::new)
+                        .preview();
                 }
                 Ok("confirm") => {
                     if let Some(key) = &self.selected
@@ -283,8 +288,8 @@ impl VijiDeck {
                     ui.label(RichText::new("/").size(20.0).color(LINE));
                     ui.label(
                         RichText::new(self.active_tool.title())
-                        .size(13.0)
-                        .color(MUTED),
+                            .size(13.0)
+                            .color(MUTED),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(22.0);
@@ -384,7 +389,8 @@ impl VijiDeck {
                 ui.add_space(if compact_rail { 12.0 } else { 28.0 });
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
-                    if crate::overview::rail_icon(ui, self.active_tool == Tool::Overview).clicked() {
+                    if crate::overview::rail_icon(ui, self.active_tool == Tool::Overview).clicked()
+                    {
                         self.active_tool = Tool::Overview;
                     }
                 });
@@ -433,7 +439,9 @@ impl VijiDeck {
                 ui.add_space(rail_gap);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
-                    if crate::services_ui::rail_icon(ui, self.active_tool == Tool::Services).clicked() {
+                    if crate::services_ui::rail_icon(ui, self.active_tool == Tool::Services)
+                        .clicked()
+                    {
                         self.active_tool = Tool::Services;
                     }
                 });
@@ -467,7 +475,9 @@ impl VijiDeck {
                         } else if self.active_tool == Tool::Environment {
                             self.environment.status()
                         } else if self.active_tool == Tool::Cleanup {
-                            self.cleanup.as_ref().map_or("Disk cleanup", |cleanup| cleanup.status())
+                            self.cleanup
+                                .as_ref()
+                                .map_or("Disk cleanup", |cleanup| cleanup.status())
                         } else if self.active_tool == Tool::Overview {
                             self.overview.status()
                         } else if self.active_tool == Tool::Processes {
@@ -529,7 +539,6 @@ impl VijiDeck {
                 });
             });
     }
-
 }
 
 impl eframe::App for VijiDeck {
@@ -551,14 +560,24 @@ impl eframe::App for VijiDeck {
         self.background.poll(ctx);
         self.background.sync_window_shape();
         self.background.sync_window_size(ctx);
-        if self.active_tool != Tool::Docker || self.background.compact { self.docker.close_logs(); }
+        if self.active_tool != Tool::Docker || self.background.compact {
+            self.docker.close_logs();
+        }
         self.docker.poll();
         self.services.poll();
         if let Some(cleanup) = &mut self.cleanup {
             cleanup.poll();
         }
         self.overview.poll();
-        while let Ok(event) = self.rx.try_recv() {
+        while let Some(result) = crate::worker::receive(&self.rx) {
+            let event = match result {
+                Ok(event) => event,
+                Err(error) => {
+                    self.busy = false;
+                    self.notice = Some((error, true));
+                    break;
+                }
+            };
             self.busy = false;
             match event {
                 Event::Snapshot(snapshot) => {
@@ -617,7 +636,7 @@ impl eframe::App for VijiDeck {
                     cleanup
                 });
                 cleanup.show(ctx);
-            },
+            }
             Tool::Ports => self.show_ports(ctx),
         }
         #[cfg(feature = "ui-preview")]

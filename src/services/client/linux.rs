@@ -80,6 +80,7 @@ fn parse(files: &str, units: &str) -> Vec<Service> {
         services.insert(
             id.to_string(),
             Service {
+                manager: crate::services::Manager::Systemd,
                 id: id.into(),
                 name: id.trim_end_matches(".service").into(),
                 description: String::new(),
@@ -104,6 +105,7 @@ fn parse(files: &str, units: &str) -> Vec<Service> {
             continue;
         }
         let service = services.entry(id.into()).or_insert_with(|| Service {
+            manager: crate::services::Manager::Systemd,
             id: id.into(),
             name: id.trim_end_matches(".service").into(),
             description: String::new(),

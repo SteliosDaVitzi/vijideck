@@ -36,9 +36,13 @@ enum ProcessRow<'a> {
 }
 type ProcessGroup<'a> = (ProcessRow<'a>, Vec<&'a Process>);
 
+struct KillRequest {
+    identity: crate::process_control::Identity,
+    name: String,
+}
 enum Command {
     Scan,
-    Kill(Process),
+    Kill(KillRequest),
     Open(PathBuf),
 }
 enum Event {
@@ -84,7 +88,9 @@ impl Processes {
                                 .with_user(UpdateKind::OnlyIfNotSet)
                                 .with_exe(UpdateKind::OnlyIfNotSet),
                         );
-                        let current_user = system.process(Pid::from_u32(std::process::id())).and_then(|p| p.user_id());
+                        let current_user = system
+                            .process(Pid::from_u32(std::process::id()))
+                            .and_then(|p| p.user_id());
                         Event::Rows(
                             system
                                 .processes()
@@ -116,7 +122,9 @@ impl Processes {
                                     }),
                                     pid: pid.as_u32(),
                                     parent: p.parent().map(|parent| parent.as_u32()),
-                                    same_user: current_user.zip(p.user_id()).map(|(current, owner)| current == owner),
+                                    same_user: current_user
+                                        .zip(p.user_id())
+                                        .map(|(current, owner)| current == owner),
                                     start: p.start_time(),
                                     name: p.name().to_string_lossy().into_owned(),
                                     exe: p.exe().map(ToOwned::to_owned),
@@ -157,7 +165,15 @@ impl Processes {
         }
     }
     pub fn show(&mut self, ctx: &egui::Context) {
-        while let Ok(event) = self.rx.try_recv() {
+        while let Some(result) = crate::worker::receive(&self.rx) {
+            let event = match result {
+                Ok(event) => event,
+                Err(error) => {
+                    self.busy = false;
+                    self.notice = Some(Err(error));
+                    break;
+                }
+            };
             match event {
                 Event::Rows(rows) => {
                     self.rows = rows;
@@ -267,7 +283,15 @@ impl Processes {
                         self.confirmation = None;
                     }
                     if ui.button(RichText::new("End process").color(RED)).clicked() {
-                        self.tx.send(Command::Kill(p)).ok();
+                        self.tx
+                            .send(Command::Kill(KillRequest {
+                                identity: crate::process_control::Identity {
+                                    pid: p.pid,
+                                    start: p.start,
+                                },
+                                name: p.name,
+                            }))
+                            .ok();
                         self.confirmation = None;
                     }
                 });
@@ -282,7 +306,14 @@ fn sorted_process_rows<'a>(
     expanded: &std::collections::HashSet<u32>,
     query: &str,
 ) -> Vec<ProcessRow<'a>> {
-    sorted_process_rows_for_platform(rows, sort, descending, expanded, std::env::consts::OS, query)
+    sorted_process_rows_for_platform(
+        rows,
+        sort,
+        descending,
+        expanded,
+        std::env::consts::OS,
+        query,
+    )
 }
 
 fn sorted_process_rows_for_platform<'a>(
@@ -294,55 +325,117 @@ fn sorted_process_rows_for_platform<'a>(
     query: &str,
 ) -> Vec<ProcessRow<'a>> {
     let by_id: std::collections::HashMap<_, _> = rows.iter().map(|p| (p.pid, *p)).collect();
-    let explorer_ids: std::collections::HashSet<u32> = rows.iter()
+    let explorer_ids: std::collections::HashSet<u32> = rows
+        .iter()
         .filter(|p| p.name.eq_ignore_ascii_case("explorer.exe"))
-        .map(|p| p.pid).collect();
-    let system_names = ["system", "registry", "smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe", "svchost.exe"];
-    let system_ids: std::collections::HashSet<u32> = rows.iter()
-        .filter(|p| p.pid <= 4 || system_names.iter().any(|name| p.name.eq_ignore_ascii_case(name)))
-        .map(|p| p.pid).collect();
+        .map(|p| p.pid)
+        .collect();
+    let system_names = [
+        "system",
+        "registry",
+        "smss.exe",
+        "csrss.exe",
+        "wininit.exe",
+        "services.exe",
+        "lsass.exe",
+        "winlogon.exe",
+        "svchost.exe",
+    ];
+    let system_ids: std::collections::HashSet<u32> = rows
+        .iter()
+        .filter(|p| {
+            p.pid <= 4
+                || system_names
+                    .iter()
+                    .any(|name| p.name.eq_ignore_ascii_case(name))
+        })
+        .map(|p| p.pid)
+        .collect();
     let mut explorer_members = explorer_ids.clone();
     let mut system_members = system_ids.clone();
     for p in rows {
         let mut parent = p.parent;
         let mut seen = std::collections::HashSet::new();
         while let Some(pid) = parent {
-            if !seen.insert(pid) { break; }
-            if explorer_ids.contains(&pid) { explorer_members.insert(p.pid); break; }
+            if !seen.insert(pid) {
+                break;
+            }
+            if explorer_ids.contains(&pid) {
+                explorer_members.insert(p.pid);
+                break;
+            }
             parent = by_id.get(&pid).and_then(|parent| parent.parent);
         }
         let mut parent = p.parent;
         seen.clear();
         while let Some(pid) = parent {
-            if !seen.insert(pid) { break; }
-            if system_ids.contains(&pid) { system_members.insert(p.pid); break; }
+            if !seen.insert(pid) {
+                break;
+            }
+            if system_ids.contains(&pid) {
+                system_members.insert(p.pid);
+                break;
+            }
             parent = by_id.get(&pid).and_then(|parent| parent.parent);
         }
     }
     if platform != "windows" {
-        explorer_members = rows.iter().filter(|p| p.same_user == Some(true)).map(|p| p.pid).collect();
-        system_members = rows.iter().filter(|p| p.same_user == Some(false) || p.pid <= 1).map(|p| p.pid).collect();
+        explorer_members = rows
+            .iter()
+            .filter(|p| p.same_user == Some(true))
+            .map(|p| p.pid)
+            .collect();
+        system_members = rows
+            .iter()
+            .filter(|p| p.same_user == Some(false) || p.pid <= 1)
+            .map(|p| p.pid)
+            .collect();
     }
-    let other_members: std::collections::HashSet<u32> = rows.iter()
+    let other_members: std::collections::HashSet<u32> = rows
+        .iter()
         .filter(|p| !explorer_members.contains(&p.pid) && !system_members.contains(&p.pid))
-        .map(|p| p.pid).collect();
+        .map(|p| p.pid)
+        .collect();
     system_members.retain(|pid| !explorer_members.contains(pid));
 
-    let mut app_groups: std::collections::BTreeMap<(usize, String), Vec<&Process>> = std::collections::BTreeMap::new();
+    let mut app_groups: std::collections::BTreeMap<(usize, String), Vec<&Process>> =
+        std::collections::BTreeMap::new();
     let section_members = [&explorer_members, &system_members, &other_members];
     for p in rows {
-        let text = format!("{} {} {}", p.name, p.pid, p.exe.as_ref().map(|path| path.display().to_string()).unwrap_or_default()).to_lowercase();
+        let text = format!(
+            "{} {} {}",
+            p.name,
+            p.pid,
+            p.exe
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        )
+        .to_lowercase();
         if !query.split_whitespace().all(|word| text.contains(word)) {
             continue;
         }
-        let section = section_members.iter().position(|members| members.contains(&p.pid)).unwrap_or(2);
-        app_groups.entry((section, p.name.to_lowercase())).or_default().push(*p);
+        let section = section_members
+            .iter()
+            .position(|members| members.contains(&p.pid))
+            .unwrap_or(2);
+        app_groups
+            .entry((section, p.name.to_lowercase()))
+            .or_default()
+            .push(*p);
     }
     let mut sections: [Vec<ProcessGroup<'a>>; 3] = std::array::from_fn(|_| Vec::new());
     for mut instances in app_groups.into_values() {
         // Section membership must not change when the sort column changes.
         instances.sort_by_key(|p| p.pid);
-        let section = instances.iter().find_map(|p| section_members.iter().position(|members| members.contains(&p.pid))).unwrap_or(2);
+        let section = instances
+            .iter()
+            .find_map(|p| {
+                section_members
+                    .iter()
+                    .position(|members| members.contains(&p.pid))
+            })
+            .unwrap_or(2);
         let first = instances[0];
         let row = if instances.len() > 1 {
             ProcessRow::AppGroup {
@@ -356,16 +449,32 @@ fn sorted_process_rows_for_platform<'a>(
         } else {
             ProcessRow::Process(first)
         };
-        instances.sort_by(|a, b| compare_process_rows(&ProcessRow::Process(a), &ProcessRow::Process(b), sort, descending));
+        instances.sort_by(|a, b| {
+            compare_process_rows(
+                &ProcessRow::Process(a),
+                &ProcessRow::Process(b),
+                sort,
+                descending,
+            )
+        });
         sections[section].push((row, instances));
     }
     let mut ordered = Vec::new();
-    let titles = [if platform == "windows" { "Explorer" } else { "User processes" }, "System", "Other"];
+    let titles = [
+        if platform == "windows" {
+            "Explorer"
+        } else {
+            "User processes"
+        },
+        "System",
+        "Other",
+    ];
     for (title, mut groups) in titles.into_iter().zip(sections) {
         groups.sort_by(|a, b| compare_process_rows(&a.0, &b.0, sort, descending));
         ordered.push(ProcessRow::Section(title));
         for (row, instances) in groups {
-            let show_children = matches!(&row, ProcessRow::AppGroup { pid, .. } if expanded.contains(pid));
+            let show_children =
+                matches!(&row, ProcessRow::AppGroup { pid, .. } if expanded.contains(pid));
             ordered.push(row);
             if show_children {
                 ordered.extend(instances.into_iter().map(ProcessRow::Process));
@@ -375,10 +484,21 @@ fn sorted_process_rows_for_platform<'a>(
     ordered
 }
 
-fn compare_process_rows(a: &ProcessRow<'_>, b: &ProcessRow<'_>, sort: usize, descending: bool) -> std::cmp::Ordering {
+fn compare_process_rows(
+    a: &ProcessRow<'_>,
+    b: &ProcessRow<'_>,
+    sort: usize,
+    descending: bool,
+) -> std::cmp::Ordering {
     fn values<'a>(row: &'a ProcessRow<'_>) -> (&'a str, u32, f32, u64, &'a str) {
         match row {
-            ProcessRow::AppGroup { name, pid, cpu, memory, .. } => (name, *pid, *cpu, *memory, ""),
+            ProcessRow::AppGroup {
+                name,
+                pid,
+                cpu,
+                memory,
+                ..
+            } => (name, *pid, *cpu, *memory, ""),
             ProcessRow::Process(p) => (&p.name, p.pid, p.cpu, p.memory, &p.status),
             ProcessRow::Section(name) => (name, 0, 0.0, 0, ""),
         }
@@ -391,7 +511,8 @@ fn compare_process_rows(a: &ProcessRow<'_>, b: &ProcessRow<'_>, sort: usize, des
         3 => a.3.cmp(&b.3),
         4 => a.4.to_lowercase().cmp(&b.4.to_lowercase()),
         _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
-    }.then(a.1.cmp(&b.1));
+    }
+    .then(a.1.cmp(&b.1));
     if descending { order.reverse() } else { order }
 }
 
@@ -440,23 +561,17 @@ fn kill_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     );
     response
 }
-fn kill(p: &Process) -> Result<String, String> {
-    if p.pid <= 4 || p.pid == std::process::id() {
-        return Err("This process is protected by VijiDeck.".into());
-    }
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(p.pid)]), true);
-    let current = system
-        .process(Pid::from_u32(p.pid))
-        .ok_or("The process has already exited.")?;
-    if p.start == 0 || current.start_time() != p.start {
-        return Err("Process identity changed. Refresh and try again.".into());
-    }
-    if crate::ports::force_kill(current, p.start)? {
-        Ok(format!("Kill request sent to {} (PID {}).", p.name, p.pid))
-    } else {
-        Err("The OS rejected the request. Administrator permissions may be required.".into())
-    }
+fn kill(request: &KillRequest) -> Result<String, String> {
+    crate::process_control::with_verified(request.identity, |current| {
+        if crate::process_control::force_kill(current, request.identity.start)? {
+            Ok(format!(
+                "Kill request sent to {} (PID {}).",
+                request.name, request.identity.pid
+            ))
+        } else {
+            Err("The OS rejected the request. Administrator permissions may be required.".into())
+        }
+    })
 }
 fn open_folder(path: &std::path::Path) -> Result<String, String> {
     if !path.is_dir() {
@@ -554,17 +669,27 @@ mod tests {
 
     fn process(pid: u32, name: &str, cpu: f32, memory: u64) -> Process {
         Process {
-            pid, parent: None, same_user: None, start: 1, name: name.into(), exe: None,
-            cpu, memory, status: "Running".into(), icon: None,
+            pid,
+            parent: None,
+            same_user: None,
+            start: 1,
+            name: name.into(),
+            exe: None,
+            cpu,
+            memory,
+            status: "Running".into(),
+            icon: None,
         }
     }
 
     fn visible_pids(rows: &[ProcessRow<'_>]) -> Vec<u32> {
-        rows.iter().filter_map(|row| match row {
-            ProcessRow::AppGroup { pid, .. } => Some(*pid),
-            ProcessRow::Process(p) => Some(p.pid),
-            ProcessRow::Section(_) => None,
-        }).collect()
+        rows.iter()
+            .filter_map(|row| match row {
+                ProcessRow::AppGroup { pid, .. } => Some(*pid),
+                ProcessRow::Process(p) => Some(p.pid),
+                ProcessRow::Section(_) => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -573,37 +698,60 @@ mod tests {
         let (tx, _commands) = mpsc::channel();
         let (_events, rx) = mpsc::channel();
         let mut view = Processes {
-            tx, rx, rows: vec![process(10, "Beta", 10.0, 100)],
-            query: String::new(), sort: 0, descending: false,
-            auto: false, busy: false, last: Instant::now(), notice: None,
-            confirmation: None, expanded: HashSet::new(),
+            tx,
+            rx,
+            rows: vec![process(10, "Beta", 10.0, 100)],
+            query: String::new(),
+            sort: 0,
+            descending: false,
+            auto: false,
+            busy: false,
+            last: Instant::now(),
+            notice: None,
+            confirmation: None,
+            expanded: HashSet::new(),
         };
         let frame = |events| egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0))),
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
             events,
             ..Default::default()
         };
-        for (column, name) in ["Name", "PID", "CPU", "Memory", "Status"].into_iter().enumerate() {
+        for (column, name) in ["Name", "PID", "CPU", "Memory", "Status"]
+            .into_iter()
+            .enumerate()
+        {
             let output = ctx.run(frame(vec![]), |ctx| view.show(ctx));
-            let pos = output.shapes.iter().find_map(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape
-                    && (text.galley.text() == name
-                        || text.galley.text().starts_with(&format!("{name} ▲"))
-                        || text.galley.text().starts_with(&format!("{name} ▼")))
-                {
-                    return Some(text.pos + text.galley.size() * 0.5);
-                }
-                None
-            }).expect("column header");
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && (text.galley.text() == name
+                            || text.galley.text().starts_with(&format!("{name} ▲"))
+                            || text.galley.text().starts_with(&format!("{name} ▼")))
+                    {
+                        return Some(text.pos + text.galley.size() * 0.5);
+                    }
+                    None
+                })
+                .expect("column header");
             for click in 0..2 {
                 for pressed in [true, false] {
-                    let _ = ctx.run(frame(vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos, button: egui::PointerButton::Primary, pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ]), |ctx| view.show(ctx));
+                    let _ = ctx.run(
+                        frame(vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]),
+                        |ctx| view.show(ctx),
+                    );
                 }
                 assert_eq!(view.sort, column);
                 let initial_descending = column != 1 && column != 4;
@@ -621,11 +769,20 @@ mod tests {
             process(10, "Beta", 10.0, 100),
         ];
         let refs: Vec<_> = processes.iter().collect();
-        for (sort, ascending) in [(0, vec![20, 10]), (1, vec![10, 20]), (2, vec![10, 20]), (3, vec![10, 20])] {
+        for (sort, ascending) in [
+            (0, vec![20, 10]),
+            (1, vec![10, 20]),
+            (2, vec![10, 20]),
+            (3, vec![10, 20]),
+        ] {
             let rows = sorted_process_rows(&refs, sort, false, &HashSet::new(), "");
             assert_eq!(visible_pids(&rows), ascending, "column {sort} ascending");
             let rows = sorted_process_rows(&refs, sort, true, &HashSet::new(), "");
-            assert_eq!(visible_pids(&rows), ascending.into_iter().rev().collect::<Vec<_>>(), "column {sort} descending");
+            assert_eq!(
+                visible_pids(&rows),
+                ascending.into_iter().rev().collect::<Vec<_>>(),
+                "column {sort} descending"
+            );
         }
     }
 
@@ -636,7 +793,10 @@ mod tests {
         let Event::Rows(rows) = view.rx.recv_timeout(Duration::from_secs(30)).unwrap() else {
             panic!("Expected a process inventory");
         };
-        let current = rows.iter().find(|p| p.pid == std::process::id()).expect("current process");
+        let current = rows
+            .iter()
+            .find(|p| p.pid == std::process::id())
+            .expect("current process");
         assert_eq!(current.same_user, Some(true));
     }
 
@@ -645,7 +805,14 @@ mod tests {
         let mut app = process(20, "Editor", 1.0, 20);
         app.parent = Some(100);
         let explorer = process(100, "explorer.exe", 0.0, 10);
-        let rows = sorted_process_rows_for_platform(&[&app, &explorer], 0, false, &HashSet::new(), "windows", "editor");
+        let rows = sorted_process_rows_for_platform(
+            &[&app, &explorer],
+            0,
+            false,
+            &HashSet::new(),
+            "windows",
+            "editor",
+        );
         assert_eq!(visible_pids(&rows), vec![20]);
         assert!(matches!(rows[0], ProcessRow::Section("Explorer")));
         assert!(matches!(rows[1], ProcessRow::Process(p) if p.pid == 20));
@@ -664,7 +831,14 @@ mod tests {
         for platform in ["linux", "macos"] {
             for sort in 0..5 {
                 for descending in [false, true] {
-                    let rows = sorted_process_rows_for_platform(&refs, sort, descending, &HashSet::new(), platform, "");
+                    let rows = sorted_process_rows_for_platform(
+                        &refs,
+                        sort,
+                        descending,
+                        &HashSet::new(),
+                        platform,
+                        "",
+                    );
                     let mut section = "";
                     let mut found = 0;
                     for row in rows {
@@ -674,12 +848,19 @@ mod tests {
                                 section = title;
                             }
                             ProcessRow::Process(p) => {
-                                assert_eq!(section, match p.pid {
-                                    20 => "User processes", 30 => "System", _ => "Other",
-                                });
+                                assert_eq!(
+                                    section,
+                                    match p.pid {
+                                        20 => "User processes",
+                                        30 => "System",
+                                        _ => "Other",
+                                    }
+                                );
                                 found += 1;
                             }
-                            ProcessRow::AppGroup { .. } => panic!("Different owners must not share an app group"),
+                            ProcessRow::AppGroup { .. } => {
+                                panic!("Different owners must not share an app group")
+                            }
                         }
                     }
                     assert_eq!(found, 3);
@@ -693,8 +874,14 @@ mod tests {
         let mut processes = [process(20, "Alpha", 0.0, 0), process(10, "Beta", 0.0, 0)];
         processes[0].status = "Sleeping".into();
         let refs: Vec<_> = processes.iter().collect();
-        assert_eq!(visible_pids(&sorted_process_rows(&refs, 4, false, &HashSet::new(), "")), vec![10, 20]);
-        assert_eq!(visible_pids(&sorted_process_rows(&refs, 4, true, &HashSet::new(), "")), vec![20, 10]);
+        assert_eq!(
+            visible_pids(&sorted_process_rows(&refs, 4, false, &HashSet::new(), "")),
+            vec![10, 20]
+        );
+        assert_eq!(
+            visible_pids(&sorted_process_rows(&refs, 4, true, &HashSet::new(), "")),
+            vec![20, 10]
+        );
     }
 
     #[test]
@@ -707,8 +894,14 @@ mod tests {
         let refs: Vec<_> = processes.iter().collect();
         let expanded = HashSet::from([20]);
         for sort in [2, 3] {
-            assert_eq!(visible_pids(&sorted_process_rows(&refs, sort, true, &expanded, "")), vec![20, 30, 20, 10]);
-            assert_eq!(visible_pids(&sorted_process_rows(&refs, sort, false, &expanded, "")), vec![10, 20, 20, 30]);
+            assert_eq!(
+                visible_pids(&sorted_process_rows(&refs, sort, true, &expanded, "")),
+                vec![20, 30, 20, 10]
+            );
+            assert_eq!(
+                visible_pids(&sorted_process_rows(&refs, sort, false, &expanded, "")),
+                vec![10, 20, 20, 30]
+            );
         }
     }
 
@@ -724,7 +917,14 @@ mod tests {
         let refs: Vec<_> = processes.iter().collect();
         for sort in 0..4 {
             for descending in [false, true] {
-                let rows = sorted_process_rows_for_platform(&refs, sort, descending, &HashSet::from([20]), "windows", "");
+                let rows = sorted_process_rows_for_platform(
+                    &refs,
+                    sort,
+                    descending,
+                    &HashSet::from([20]),
+                    "windows",
+                    "",
+                );
                 let mut section = "";
                 for row in rows {
                     match row {

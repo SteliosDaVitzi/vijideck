@@ -1,3 +1,4 @@
+use crate::environment_settings::{save, valid_name};
 use crate::ui::{AMBER, CYAN, LINE, MUTED, PANEL, SURFACE, rule};
 use eframe::egui::{self, RichText};
 
@@ -19,10 +20,23 @@ pub struct Variables {
     notice: Option<String>,
     pending: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     dragging: Option<usize>,
+    loading: Option<std::sync::mpsc::Receiver<Result<crate::environment_settings::Rows, String>>>,
 }
 impl Variables {
+    #[cfg(feature = "ui-preview")]
+    pub fn preview_ready(&self) -> bool {
+        self.loaded && self.loading.is_none()
+    }
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        if let Some(result) = self.pending.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        if let Some(result) = self.loading.as_ref().and_then(crate::worker::poll) {
+            self.loading = None;
+            match result {
+                Ok(rows) => self.rows.extend(rows),
+                Err(e) => self.notice = Some(e),
+            }
+            self.rows.sort_by_key(|r| (r.0.to_lowercase(), r.2.clone()));
+        }
+        if let Some(result) = self.pending.as_ref().and_then(crate::worker::poll) {
             self.pending = None;
             match result {
                 Ok(()) => {
@@ -38,7 +52,11 @@ impl Variables {
         if !self.loaded {
             self.refresh();
         }
-        if self.pending.is_some() {
+        if self.loading.is_some() {
+            ui.spinner();
+            ui.label("Reading saved settings…");
+        }
+        if self.pending.is_some() || self.loading.is_some() {
             ui.disable();
         }
         ui.horizontal(|ui| {
@@ -301,7 +319,7 @@ impl Variables {
             let list_height = (viewport.height() - 390.0).clamp(90.0, 300.0);
             egui::Window::new(if self.original.is_some() { "Edit variable" } else { "Add variable" }).id(egui::Id::new("variable-editor")).default_width(width).collapsible(false).resizable(false).show(ctx, |ui| {
                 ui.set_width(width);
-                if self.pending.is_some() { ui.spinner(); ui.label("Saving changes…"); ui.disable(); }
+                if self.pending.is_some() || self.loading.is_some() { ui.spinner(); ui.label("Saving changes…"); ui.disable(); }
                 ui.label("Variable name");
                 let response = ui.add_enabled(self.original.is_none(), egui::TextEdit::singleline(&mut self.name).desired_width(f32::INFINITY).font(egui::FontId::proportional(12.0)).vertical_align(egui::Align::Center));
                 if response.changed() && is_list(&self.name) && !self.list { self.list = true; self.items = split_list(&self.value); }
@@ -398,18 +416,24 @@ impl Variables {
         }
     }
     fn apply(&mut self, value: Option<String>, ctx: &egui::Context) {
+        if self.pending.is_some() || self.loading.is_some() {
+            return;
+        }
         self.notice = None;
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.pending = Some(rx);
+
         let name = self.name.clone();
         let scope = self.scope;
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(save(&name, value.as_deref(), scope));
+        self.pending = Some(crate::worker::spawn(move || {
+            let result = save(&name, value.as_deref(), scope);
             ctx.request_repaint();
-        });
+            result
+        }));
     }
     fn refresh(&mut self) {
+        if self.loading.is_some() {
+            return;
+        }
         self.loaded = true;
         self.rows = std::env::vars_os()
             .map(|(k, v)| {
@@ -420,10 +444,9 @@ impl Variables {
                 )
             })
             .collect();
-        match persistent() {
-            Ok(rows) => self.rows.extend(rows),
-            Err(e) => self.notice = Some(e),
-        }
+        self.loading = Some(crate::worker::spawn(
+            crate::environment_settings::persistent,
+        ));
         self.rows.sort_by_key(|r| (r.0.to_lowercase(), r.2.clone()));
         #[cfg(feature = "ui-preview")]
         if std::env::var_os("VIJIDECK_PREVIEW_VARIABLES").is_some() {
@@ -540,173 +563,32 @@ fn split_list(value: &str) -> Vec<String> {
 fn join_list(items: &[String]) -> String {
     items.join(if cfg!(windows) { ";" } else { ":" })
 }
-fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .enumerate()
-            .all(|(i, c)| c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
-}
-
-#[cfg(windows)]
-fn powershell(script: &str) -> Result<String, String> {
-    use std::os::windows::process::CommandExt;
-    let out = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-#[cfg(windows)]
-fn persistent() -> Result<Vec<(String, String, String)>, String> {
-    let out = powershell(
-        r#"[Console]::OutputEncoding = [Text.Encoding]::UTF8; $r = @(); foreach ($s in @('User','Machine')) { $target = [EnvironmentVariableTarget]::$s; foreach ($e in [Environment]::GetEnvironmentVariables($target).GetEnumerator()) { $r += @{name=[string]$e.Key; value=[string]$e.Value; scope=if($s -eq 'Machine'){'System'}else{'User'}} } }; ConvertTo-Json -Compress -InputObject @($r)"#,
-    )?;
-    let data: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
-    Ok(data
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|v| {
-            Some((
-                v["name"].as_str()?.into(),
-                v["value"].as_str()?.into(),
-                v["scope"].as_str()?.into(),
-            ))
-        })
-        .collect())
-}
-#[cfg(windows)]
-fn save(name: &str, value: Option<&str>, scope: usize) -> Result<(), String> {
-    if !valid_name(name) || value.is_some_and(|v| v.is_empty() || v.contains('\0')) {
-        return Err(
-            "Use a valid variable name and a nonempty value without NUL characters.".into(),
-        );
-    }
-    // Base64 encodes UTF-16 PowerShell source, so values are never interpreted as commands.
-    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-    let expression = value.map(quote).unwrap_or_else(|| "$null".into());
-    let script = format!(
-        "try {{ [Environment]::SetEnvironmentVariable({}, {}, '{}'); exit 0 }} catch {{ exit 1 }}",
-        quote(name),
-        expression,
-        if scope == 1 { "Machine" } else { "User" }
-    );
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let encoded = base64(&bytes);
-    if scope == 1 {
-        powershell(&format!(
-            "$p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile -NonInteractive -EncodedCommand {encoded}'; if ($p.ExitCode -ne 0) {{ throw 'The elevated change failed.' }}"
-        ))?;
-    } else {
-        powershell(&format!(
-            "& powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded}; if ($LASTEXITCODE -ne 0) {{ throw 'The change failed.' }}"
-        ))?;
-    }
-    Ok(())
-}
-#[cfg(windows)]
-fn base64(bytes: &[u8]) -> String {
-    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut s = String::new();
-    for c in bytes.chunks(3) {
-        let n = ((c[0] as u32) << 16)
-            | ((c.get(1).copied().unwrap_or(0) as u32) << 8)
-            | c.get(2).copied().unwrap_or(0) as u32;
-        s.push(T[((n >> 18) & 63) as usize] as char);
-        s.push(T[((n >> 12) & 63) as usize] as char);
-        s.push(if c.len() > 1 {
-            T[((n >> 6) & 63) as usize] as char
-        } else {
-            '='
-        });
-        s.push(if c.len() > 2 {
-            T[(n & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    s
-}
-
-#[cfg(not(windows))]
-fn profile() -> Result<std::path::PathBuf, String> {
-    Ok(
-        std::path::PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-            .join(".profile"),
-    )
-}
-#[cfg(not(windows))]
-fn persistent() -> Result<Vec<(String, String, String)>, String> {
-    let path = profile()?;
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    Ok(content
-        .lines()
-        .filter_map(|line| {
-            let (name, encoded) = line.strip_prefix("# VijiDeck variable ")?.split_once('=')?;
-            let bytes: Option<Vec<u8>> = encoded
-                .as_bytes()
-                .chunks(2)
-                .map(|c| {
-                    if c.len() != 2 {
-                        return None;
-                    }
-                    u8::from_str_radix(std::str::from_utf8(c).ok()?, 16).ok()
-                })
-                .collect();
-            Some((name.into(), String::from_utf8(bytes?).ok()?, "User".into()))
-        })
-        .collect())
-}
-#[cfg(not(windows))]
-fn save(name: &str, value: Option<&str>, _: usize) -> Result<(), String> {
-    if !valid_name(name) || value.is_some_and(|v| v.contains(['\0', '\n', '\r'])) {
-        return Err("Use a valid shell variable name and a single-line value.".into());
-    }
-    let path = profile()?;
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    let marker = format!("# VijiDeck variable {name}=");
-    let export = format!("export {name}=");
-    let mut lines = content.lines();
-    let mut result = String::new();
-    while let Some(line) = lines.next() {
-        if line.starts_with(&marker) {
-            if let Some(next) = lines.next()
-                && !next.starts_with(&export)
-            {
-                result.push_str(next);
-                result.push('\n');
-            }
-        } else {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-    if let Some(v) = value {
-        let hex: String = v.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
-        result.push_str(&format!(
-            "{marker}{hex}\nexport {name}='{}'\n",
-            v.replace('\'', "'\\''")
-        ));
-    }
-    std::fs::write(path, result).map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disconnected_settings_jobs_release_the_view() {
+        let ctx = egui::Context::default();
+        let (tx, loading) = std::sync::mpsc::channel();
+        let (save_tx, pending) = std::sync::mpsc::channel();
+        let mut view = Variables {
+            loaded: true,
+            loading: Some(loading),
+            pending: Some(pending),
+            ..Default::default()
+        };
+        drop(tx);
+        drop(save_tx);
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| view.show(ui));
+        });
+        assert!(view.loading.is_none() && view.pending.is_none());
+        assert!(
+            view.notice
+                .as_ref()
+                .is_some_and(|notice| notice.contains("Worker stopped"))
+        );
+    }
     #[test]
     fn moving_entries_uses_the_drop_gap_and_preserves_duplicates() {
         let mut items = vec!["a", "b", "a", "c"];

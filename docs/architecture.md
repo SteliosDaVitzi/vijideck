@@ -1,6 +1,6 @@
 # Architecture and maintenance audit
 
-Reviewed 2026-11-05. Scope: the Rust desktop application, background work,
+Reviewed 2026-11-07. Scope: the Rust desktop application, background work,
 platform integrations, persistence, tests, and native packaging workflow.
 
 ## Design
@@ -14,7 +14,7 @@ packages or an async runtime.
 | `main.rs` | Native window setup and application startup |
 | `app.rs`, `app/tool.rs` | Application composition, typed navigation, preferences, and event dispatch |
 | `app/ports_view.rs` | Port table, inspector, notices, and stop confirmation rendering |
-| `ports.rs` | Socket inventory, process identity checks, and termination |
+| `ports.rs` / `process_control.rs` | Socket inventory and ownership validation / shared process identity checks and native termination |
 | `cleanup.rs` / `cleanup_ui.rs` | Filesystem discovery and validated deletion / UI state and confirmation |
 | `docker/model.rs` | Container validation, action requests, search, and deterministic Compose grouping |
 | `docker/client.rs` | Docker CLI invocation, inventory loading, and action execution |
@@ -23,7 +23,8 @@ packages or an async runtime.
 | `command.rs` | Bounded capture and deadlines for finite external commands |
 | `overview.rs`, `gpu.rs`, `volumes.rs` | Telemetry, hardware inventory, and shared volume policy |
 | `processes.rs` | Process inventory, grouping, sorting, and process view |
-| `environment*.rs` | Tool discovery, installation provenance, icons, PATH, and environment editing |
+| `environment*.rs`, `profile.rs` | Tool catalog, discovery, provenance and views / persistent settings adapters and serialized profile replacement |
+| `worker.rs` | Finite-job completion, panic reporting and disconnected-channel handling |
 | `logs.rs` / `logs_ui.rs`, `logs_list.rs`, `logs_access.rs` | OS log providers / presentation and explicit access requests |
 | `services.rs`, `services/client/` / `services_ui.rs` | Service identities, capabilities and stale-state validation; bounded platform commands / service inventory, inspector and confirmations |
 | `storage.rs` | SQLite schema, preferences, and disposable discovery caches |
@@ -72,15 +73,45 @@ view, while fresh filesystem validation and deletion belong to the backend.
 Likewise, caches are revalidated rather than trusted as deletion authority.
 These mechanisms and the process identity protections were preserved.
 
+## SOLID refactoring follow-up
+
+Environment variable reads and PATH changes run in background jobs. Persistent
+settings live outside the views; Unix variable and PATH edits share a serialized
+profile updater. It writes a temporary sibling, syncs it, checks for changed
+contents/identity, and atomically replaces the resolved target, retaining symlinks
+and Unix ownership, mode and extended attributes (including ACLs). Conflict detection
+is best effort: an unrelated writer can still race the final check and rename.
+Metadata-copy failures leave the original file intact. Windows authenticated writes
+retain their existing completion semantics; read-only PowerShell inventory uses bounded capture.
+
+Finite jobs report panic/spawn failures through `worker.rs`. Cleanup keeps its
+streaming progress events and adds a separate job-completion channel, so a retained
+sender cannot hide worker failure. Failed mutations are never retried automatically.
+Long-lived port/process workers clear busy state and report disconnection; restarting
+the application is required to recreate a failed long-lived worker.
+
+Service adapters identify their manager; shared capability and state classification
+powers both action validation and presentation. Native state strings remain available
+for display and stale-snapshot comparisons. Systemd's manually startable disabled
+units remain distinct from Windows/launchd disabled services. Both process views now
+use `process_control.rs`; socket ownership remains an additional port-specific check.
+Developer-tool discovery and presentation use one metadata catalog with stable cache
+names, categories, grouping, primary-version roles and release links.
+
+Follow-up validation on Linux: 89 tests passed, three intentionally ignored;
+strict app and xtask Clippy passed. Environment and compact service previews were
+captured using disposable/synthetic data. Changed Rust files pass rustfmt; the
+repository-wide app and xtask formatting checks still report pre-existing
+formatting differences in untouched source. Native Windows/macOS testing remains
+outstanding.
+
 ## Remaining maintenance considerations
 
 - `cleanup_ui.rs`, `environment.rs`, and `processes.rs` still combine view state
   with substantial rendering or discovery logic. Extract cohesive responsibilities
   as those features change; the Docker model/view split provides a pattern.
-- Background workers use several channel/state patterns. Some views only handle
-  successful channel receipt and can retain a busy state if a worker panics.
-  A future worker-lifecycle abstraction should explicitly model disconnection and
-  cancellation, while preserving each feature's different streaming semantics.
+- Continuous telemetry, logs and interactive terminal streams retain their own
+  cancellation and process lifecycles. The finite-job helper does not replace them.
 - The finite-command helper supervises the direct child, not an entire process
   tree. Inherited-pipe reader threads can remain alive until descendants close
   their handles, although the calling worker returns at its deadline. Stronger

@@ -9,213 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Spec {
-    name: &'static str,
-    exe: &'static str,
-    arg: &'static str,
-}
-const TOOLS: &[Spec] = &[
-    Spec {
-        name: "Python",
-        exe: "python",
-        arg: "--version",
-    },
-    Spec {
-        name: "Python 3",
-        exe: "python3",
-        arg: "--version",
-    },
-    Spec {
-        name: "Node.js",
-        exe: "node",
-        arg: "--version",
-    },
-    Spec {
-        name: ".NET",
-        exe: "dotnet",
-        arg: "--version",
-    },
-    Spec {
-        name: "Java",
-        exe: "java",
-        arg: "-version",
-    },
-    Spec {
-        name: "Java compiler",
-        exe: "javac",
-        arg: "-version",
-    },
-    Spec {
-        name: "Rust",
-        exe: "rustc",
-        arg: "--version",
-    },
-    Spec {
-        name: "Go",
-        exe: "go",
-        arg: "version",
-    },
-    Spec {
-        name: "Ruby",
-        exe: "ruby",
-        arg: "--version",
-    },
-    Spec {
-        name: "PHP",
-        exe: "php",
-        arg: "--version",
-    },
-    Spec {
-        name: "Deno",
-        exe: "deno",
-        arg: "--version",
-    },
-    Spec {
-        name: "Bun",
-        exe: "bun",
-        arg: "--version",
-    },
-    Spec {
-        name: "npm",
-        exe: "npm",
-        arg: "--version",
-    },
-    Spec {
-        name: "npx",
-        exe: "npx",
-        arg: "--version",
-    },
-    Spec {
-        name: "pnpm",
-        exe: "pnpm",
-        arg: "--version",
-    },
-    Spec {
-        name: "Yarn",
-        exe: "yarn",
-        arg: "--version",
-    },
-    Spec {
-        name: "pip",
-        exe: "pip",
-        arg: "--version",
-    },
-    Spec {
-        name: "pip3",
-        exe: "pip3",
-        arg: "--version",
-    },
-    Spec {
-        name: "uv",
-        exe: "uv",
-        arg: "--version",
-    },
-    Spec {
-        name: "Poetry",
-        exe: "poetry",
-        arg: "--version",
-    },
-    Spec {
-        name: "Cargo",
-        exe: "cargo",
-        arg: "--version",
-    },
-    Spec {
-        name: "Maven",
-        exe: "mvn",
-        arg: "--version",
-    },
-    Spec {
-        name: "Gradle",
-        exe: "gradle",
-        arg: "--version",
-    },
-    Spec {
-        name: "Conda",
-        exe: "conda",
-        arg: "--version",
-    },
-    Spec {
-        name: "Homebrew",
-        exe: "brew",
-        arg: "--version",
-    },
-    Spec {
-        name: "winget",
-        exe: "winget",
-        arg: "--version",
-    },
-    Spec {
-        name: "Chocolatey",
-        exe: "choco",
-        arg: "--version",
-    },
-    Spec {
-        name: "Scoop",
-        exe: "scoop",
-        arg: "--version",
-    },
-    Spec {
-        name: "apt",
-        exe: "apt",
-        arg: "--version",
-    },
-    Spec {
-        name: "dnf",
-        exe: "dnf",
-        arg: "--version",
-    },
-    Spec {
-        name: "pacman",
-        exe: "pacman",
-        arg: "--version",
-    },
-    Spec {
-        name: "Docker",
-        exe: "docker",
-        arg: "--version",
-    },
-    Spec {
-        name: "Podman",
-        exe: "podman",
-        arg: "--version",
-    },
-    Spec {
-        name: "Git",
-        exe: "git",
-        arg: "--version",
-    },
-    Spec {
-        name: "CMake",
-        exe: "cmake",
-        arg: "--version",
-    },
-    Spec {
-        name: "Make",
-        exe: "make",
-        arg: "--version",
-    },
-    Spec {
-        name: "GCC",
-        exe: "gcc",
-        arg: "--version",
-    },
-    Spec {
-        name: "Clang",
-        exe: "clang",
-        arg: "--version",
-    },
-    Spec {
-        name: "Kubernetes CLI",
-        exe: "kubectl",
-        arg: "version --client",
-    },
-    Spec {
-        name: "Terraform",
-        exe: "terraform",
-        arg: "--version",
-    },
-];
+use crate::environment_catalog::{TOOLS, spec};
 struct Entry {
     name: &'static str,
     path: PathBuf,
@@ -246,6 +40,7 @@ pub struct Environment {
     scanned: bool,
     path_confirmation: Option<(PathBuf, bool)>,
     path_notice: Option<String>,
+    path_pending: Option<Receiver<Result<String, String>>>,
     run_confirmation: Option<PathBuf>,
     checks: (mpsc::Sender<Check>, Receiver<Check>),
     icons: std::collections::HashMap<(&'static str, u32), Option<egui::TextureHandle>>,
@@ -268,6 +63,7 @@ impl Environment {
             scanned: false,
             path_confirmation: None,
             path_notice: None,
+            path_pending: None,
             run_confirmation: None,
             checks: mpsc::channel(),
             icons: std::collections::HashMap::new(),
@@ -368,7 +164,10 @@ impl Environment {
         }
         // While a scan is running, its Finished handler merges and saves approvals.
         if changed && self.rx.is_none() {
-            save_cache(crate::storage::Storage::open_cache().as_ref(), &self.entries);
+            save_cache(
+                crate::storage::Storage::open_cache().as_ref(),
+                &self.entries,
+            );
         }
     }
     fn approve(&mut self, path: PathBuf) {
@@ -388,7 +187,9 @@ impl Environment {
         });
     }
     pub fn status(&self) -> &'static str {
-        if self.rx.is_some() {
+        if self.path_pending.is_some() {
+            "Updating user PATH"
+        } else if self.rx.is_some() {
             "Syncing developer environment"
         } else {
             "Developer environment"
@@ -396,16 +197,29 @@ impl Environment {
     }
     #[cfg(feature = "ui-preview")]
     pub fn preview_ready(&self) -> bool {
-        self.tab == 1 || (self.scanned && self.rx.is_none())
+        (self.tab == 1 && self.variables.preview_ready())
+            || (self.tab == 0 && self.scanned && self.rx.is_none())
     }
     pub fn show(&mut self, ctx: &egui::Context) {
         if self.tab == 0 && !self.scanned && self.rx.is_none() {
             self.scanned = true;
             self.scan(ctx);
         }
+        if let Some(result) = self.path_pending.as_ref().and_then(crate::worker::poll) {
+            self.path_pending = None;
+            self.path_notice = Some(result.unwrap_or_else(|e| format!("PATH change failed: {e}")));
+        }
         let mut finished = false;
+        let mut scan_error = None;
         if let Some(rx) = &self.rx {
-            while let Ok(event) = rx.try_recv() {
+            while let Some(result) = crate::worker::receive(rx) {
+                let event = match result {
+                    Ok(event) => event,
+                    Err(e) => {
+                        scan_error = Some(e);
+                        break;
+                    }
+                };
                 match event {
                     ScanEvent::Directory(path) => self.current_dir = Some(path),
                     ScanEvent::Restored(entries) => self.entries = entries,
@@ -423,6 +237,7 @@ impl Environment {
                         }
                         self.entries = entries;
                         finished = true;
+                        break;
                     }
                 }
             }
@@ -430,7 +245,15 @@ impl Environment {
         if finished {
             self.rx = None;
             self.current_dir = None;
-            save_cache(crate::storage::Storage::open_cache().as_ref(), &self.entries);
+            save_cache(
+                crate::storage::Storage::open_cache().as_ref(),
+                &self.entries,
+            );
+        }
+        if let Some(error) = scan_error {
+            self.rx = None;
+            self.current_dir = None;
+            self.path_notice = Some(error);
         }
         self.finish_checks();
         egui::CentralPanel::default().frame(panel(BG, 28)).show(ctx, |ui| {
@@ -642,8 +465,9 @@ impl Environment {
                 else { ui.label("Changes VijiDeck-managed entries in ~/.profile for login shells. Other shell and graphical environments may use different settings."); }
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() { self.path_confirmation = None; }
-                    if ui.button(if add { "Add to user PATH" } else { "Remove from user PATH" }).clicked() {
-                        self.path_notice = Some(match crate::environment_path::change(&dir, add) { Ok(message) => message, Err(error) => format!("PATH change failed: {error}") });
+                    if ui.add_enabled(self.path_pending.is_none(), egui::Button::new(if add { "Add to user PATH" } else { "Remove from user PATH" })).clicked() {
+                        let dir = dir.clone();
+                        self.path_pending = Some(crate::worker::spawn(move || crate::environment_settings::change_path(&dir, add)));
                         self.path_confirmation = None;
                     }
                 });
@@ -708,12 +532,7 @@ impl VersionPill {
 fn group_versions(group: &str, entries: &[Entry]) -> Vec<VersionPill> {
     let mut versions: Vec<VersionPill> = Vec::new();
     for entry in entries {
-        let primary = match group {
-            "Python" => matches!(entry.name, "Python" | "Python 3"),
-            "Node.js" | ".NET" | "Java" | "Rust" | "Go" | "Ruby" | "PHP" | "Deno" | "Bun"
-            | "Git" => entry.name == group,
-            _ => false,
-        };
+        let primary = spec(entry.name).is_some_and(|spec| spec.primary && spec.group == group);
         if primary && let Some(version) = version_number(&entry.version) {
             let origin = entry.origin.label();
             let evidence = entry.origin.description();
@@ -784,50 +603,13 @@ fn group_aliases<'a>(entries: &[&'a Entry]) -> Vec<Vec<&'a Entry>> {
     groups
 }
 fn category_for(name: &str) -> &'static str {
-    match name {
-        "Python" | "Python 3" | "Node.js" | ".NET" | "Java" | "Java compiler" | "Rust" | "Go"
-        | "Ruby" | "PHP" | "Deno" | "Bun" => "Languages & runtimes",
-        "npm" | "npx" | "pnpm" | "Yarn" | "pip" | "pip3" | "uv" | "Poetry" | "Cargo" | "Maven"
-        | "Gradle" | "Conda" | "Homebrew" | "winget" | "Chocolatey" | "Scoop" | "apt" | "dnf"
-        | "pacman" => "Package managers",
-        _ => "Other tools",
-    }
+    spec(name).map_or("Other tools", |s| s.category.label())
 }
-
 fn release_url(name: &str) -> Option<&'static str> {
-    match name {
-        "Python" | "Python 3" => Some("https://www.python.org/downloads/"),
-        "Node.js" => Some("https://nodejs.org/en/download"),
-        ".NET" => Some("https://dotnet.microsoft.com/download"),
-        "Rust" | "Cargo" => Some("https://www.rust-lang.org/tools/install"),
-        "Go" => Some("https://go.dev/dl/"),
-        "pip" | "pip3" => Some("https://pypi.org/project/pip/"),
-        "npm" => Some("https://www.npmjs.com/package/npm"),
-        "Docker" => Some("https://docs.docker.com/get-docker/"),
-        "Git" => Some("https://git-scm.com/downloads"),
-        _ => None,
-    }
+    spec(name).and_then(|s| s.release_url)
 }
 fn group_for(name: &str) -> &'static str {
-    match name {
-        "Python" | "Python 3" | "pip" | "pip3" | "uv" | "Poetry" | "Conda" => "Python",
-        "Node.js" | "npm" | "npx" | "pnpm" | "Yarn" => "Node.js",
-        ".NET" => ".NET",
-        "Java" | "Java compiler" | "Maven" | "Gradle" => "Java",
-        "Rust" | "Cargo" => "Rust",
-        "Go" => "Go",
-        "Ruby" => "Ruby",
-        "PHP" => "PHP",
-        "Deno" => "Deno",
-        "Bun" => "Bun",
-        "Docker" | "Podman" | "Kubernetes CLI" => "Containers",
-        "Git" => "Git",
-        "CMake" | "Make" | "GCC" | "Clang" => "Build tools",
-        "Homebrew" | "winget" | "Chocolatey" | "Scoop" | "apt" | "dnf" | "pacman" => {
-            "System package managers"
-        }
-        _ => "Other tools",
-    }
+    spec(name).map_or("Other tools", |s| s.group)
 }
 fn candidates(dir: &Path, exe: &str) -> Vec<PathBuf> {
     #[cfg(windows)]
@@ -890,7 +672,8 @@ impl Trust {
     }
     fn allows(&self, path: &Path) -> bool {
         let path = canonical(path);
-        path.parent().is_some_and(|parent| self.dirs.iter().any(|d| d == parent))
+        path.parent()
+            .is_some_and(|parent| self.dirs.iter().any(|d| d == parent))
             || self.trees.iter().any(|tree| path.starts_with(tree))
             || admin_only(&path)
     }
@@ -903,9 +686,9 @@ impl Trust {
 fn admin_only(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     path.is_absolute()
-        && path.ancestors().all(|p| {
-            std::fs::metadata(p).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
-        })
+        && path
+            .ancestors()
+            .all(|p| std::fs::metadata(p).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0))
 }
 #[cfg(not(unix))]
 fn admin_only(_path: &Path) -> bool {
@@ -1156,13 +939,21 @@ fn version(path: &Path, args: &str) -> String {
     }
     let mut cmd = Command::new(path);
     cmd.args(args.split_whitespace());
-    match crate::command::capture(cmd, crate::command::Limits {
-        timeout: Duration::from_secs(2),
-        output_bytes: 1024 * 1024,
-    }) {
+    match crate::command::capture(
+        cmd,
+        crate::command::Limits {
+            timeout: Duration::from_secs(2),
+            output_bytes: 1024 * 1024,
+        },
+    ) {
         Ok(out) => {
-            let text = if out.stdout.is_empty() { out.stderr } else { out.stdout };
-            String::from_utf8_lossy(&text).lines()
+            let text = if out.stdout.is_empty() {
+                out.stderr
+            } else {
+                out.stdout
+            };
+            String::from_utf8_lossy(&text)
+                .lines()
                 .find(|line| !line.trim().is_empty())
                 .map(|line| line.trim().chars().take(200).collect())
                 .unwrap_or_else(|| "Version unavailable".into())

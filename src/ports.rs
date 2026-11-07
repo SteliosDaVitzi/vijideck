@@ -222,106 +222,37 @@ pub fn stop(request: &StopRequest) -> Result<String, String> {
         .socket
         .pid
         .ok_or("No process owner is available for this socket.")?;
-    if pid <= 4 || pid == std::process::id() {
-        return Err("This process is protected by VijiDeck.".into());
-    }
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), true);
-    let p = system
-        .process(Pid::from_u32(pid))
-        .ok_or("The process has already exited.")?;
-    if request.start == 0 || p.start_time() != request.start {
-        return Err("Process identity changed. Refresh and select it again.".into());
-    }
-    let (current, warnings) = sockets();
-    if !current.iter().any(|p| p.key == request.socket) {
-        return Err(format!(
-            "Socket ownership could not be verified. Refresh and try again. {}",
-            warnings.join("; ")
-        ));
-    }
-    let sent = if request.force {
-        force_kill(p, request.start)?
-    } else {
-        p.kill_with(Signal::Term).ok_or(
+    crate::process_control::with_verified(
+        crate::process_control::Identity {
+            pid,
+            start: request.start,
+        },
+        |p| {
+            let (current, warnings) = sockets();
+            if !current.iter().any(|p| p.key == request.socket) {
+                return Err(format!(
+                    "Socket ownership could not be verified. Refresh and try again. {}",
+                    warnings.join("; ")
+                ));
+            }
+            let sent = if request.force {
+                crate::process_control::force_kill(p, request.start)?
+            } else {
+                p.kill_with(Signal::Term).ok_or(
             "Graceful termination is unsupported on this platform. Use Force kill if needed.",
         )?
-    };
-    if sent {
-        Ok(format!(
-            "{} signal sent to {} (PID {pid}). Refreshing to check the result.",
-            if request.force { "Kill" } else { "Termination" },
-            request.name
-        ))
-    } else {
-        Err("The OS rejected the request. The process may have exited or require administrator/root permissions.".into())
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn force_kill(process: &sysinfo::Process, _: u64) -> Result<bool, String> {
-    Ok(process.kill())
-}
-
-// Use a native process handle rather than shelling out to taskkill. The same
-// handle is used to verify creation time and terminate, avoiding PID reuse here.
-#[cfg(windows)]
-pub(crate) fn force_kill(process: &sysinfo::Process, expected_start: u64) -> Result<bool, String> {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, FILETIME, HANDLE},
-        System::Threading::{
-            GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-            TerminateProcess,
-        },
-    };
-    struct Handle(HANDLE);
-    impl Drop for Handle {
-        fn drop(&mut self) {
-            // SAFETY: This handle is uniquely owned and was returned by OpenProcess.
-            unsafe {
-                CloseHandle(self.0);
+            };
+            if sent {
+                Ok(format!(
+                    "{} signal sent to {} (PID {pid}). Refreshing to check the result.",
+                    if request.force { "Kill" } else { "Termination" },
+                    request.name
+                ))
+            } else {
+                Err("The OS rejected the request. The process may have exited or require administrator/root permissions.".into())
             }
-        }
-    }
-    // SAFETY: OpenProcess takes a numeric PID and returns an owned handle or null.
-    let raw = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
-            0,
-            process.pid().as_u32(),
-        )
-    };
-    if raw.is_null() {
-        return Err(format!(
-            "Cannot open process for termination: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let handle = Handle(raw);
-    let mut creation = FILETIME::default();
-    let mut exit = FILETIME::default();
-    let mut kernel = FILETIME::default();
-    let mut user = FILETIME::default();
-    // SAFETY: All output pointers refer to valid FILETIMEs and handle is live.
-    if unsafe { GetProcessTimes(handle.0, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
-        return Err(format!(
-            "Cannot verify process creation time: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
-    let unix_seconds = (ticks / 10_000_000).saturating_sub(11_644_473_600);
-    if unix_seconds != expected_start {
-        return Err("Process identity changed. Refresh and select it again.".into());
-    }
-    // SAFETY: The verified, live handle was opened with PROCESS_TERMINATE rights.
-    if unsafe { TerminateProcess(handle.0, 1) } == 0 {
-        return Err(format!(
-            "Termination failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(true)
+        },
+    )
 }
 
 #[cfg(test)]

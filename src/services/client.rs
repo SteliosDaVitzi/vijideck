@@ -57,6 +57,9 @@ pub fn inventory(scope: Scope) -> Result<Vec<Service>, String> {
 }
 
 pub fn apply(request: &Request) -> Result<String, String> {
+    if request.service.manager != super::Manager::native() {
+        return Err("This service belongs to a different platform service manager.".into());
+    }
     // Re-read identity, configuration and runtime state immediately before dispatch.
     super::validate(request, &inventory(request.scope)?)?;
     #[cfg(windows)]
